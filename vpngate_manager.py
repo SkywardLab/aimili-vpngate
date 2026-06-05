@@ -1111,7 +1111,11 @@ def auto_switch_node(attempt: int = 0) -> None:
         ]
         
         if routing_mode == "fixed_region" and target_country:
-            candidates = [n for n in candidates if n.get("country") == target_country]
+            candidates = [
+                n for n in candidates 
+                if n.get("country") == target_country 
+                or vpn_utils.COUNTRY_TRANSLATIONS.get(n.get("country", ""), n.get("country", "")) == target_country
+            ]
             
         # Apply routing_ip_type filter
         routing_ip_type = ui_cfg.get("routing_ip_type", "all")
@@ -1377,7 +1381,11 @@ def maintain_valid_nodes(force: bool = False) -> str:
                     if routing_mode != "fixed_ip":
                         available_candidates = [n for n in merged if n.get("probe_status") == "available"]
                         if routing_mode == "fixed_region" and target_country:
-                            available_candidates = [n for n in available_candidates if n.get("country") == target_country]
+                            available_candidates = [
+                                n for n in available_candidates 
+                                if n.get("country") == target_country 
+                                or vpn_utils.COUNTRY_TRANSLATIONS.get(n.get("country", ""), n.get("country", "")) == target_country
+                            ]
                         
                         # Apply routing_ip_type filter for auto-connect
                         routing_ip_type = ui_cfg.get("routing_ip_type", "all")
@@ -2258,7 +2266,8 @@ INDEX_HTML = r"""<!doctype html>
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      min-width: 1000px;
+      min-width: 1330px;
+      table-layout: fixed;
     }
 
     th, td {
@@ -2274,6 +2283,9 @@ INDEX_HTML = r"""<!doctype html>
       text-transform: uppercase;
       letter-spacing: 0.8px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     tr {
@@ -2660,10 +2672,6 @@ INDEX_HTML = r"""<!doctype html>
       <option value="hosting">机房IP</option>
     </select>
     <input id="search" placeholder="输入国家、位置、IP、ASN、运营主体等过滤节点..." />
-    <button id="btn_batch_test" class="btn-primary" style="height: 42px; padding: 0 20px; font-weight: 600; background: var(--primary-gradient);">
-      <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-      批量测试本页
-    </button>
   </section>
   <div class="table-wrapper">
     <div class="table-container">
@@ -2673,9 +2681,9 @@ INDEX_HTML = r"""<!doctype html>
             <th style="width: 110px;">状态</th>
             <th style="width: 100px;">延迟</th>
             <th style="width: 220px;">IP 地址 : 端口</th>
-            <th>物理位置</th>
+            <th style="width: 180px;">物理位置</th>
             <th style="width: 100px;">ASN</th>
-            <th>运营主体 / ISP</th>
+            <th style="width: 240px;">运营主体 / ISP</th>
             <th style="width: 110px;">网络质量</th>
             <th style="width: 110px;">IP 类型</th>
             <th style="width: 160px;">操作</th>
@@ -3073,7 +3081,7 @@ function getLatencyClass(ms) {
 function updateCountryFilter() {
   const select = $("country_filter");
   const selectedValue = select.value;
-  const countries = Array.from(new Set(nodes.map(n => n.country).filter(Boolean))).sort();
+  const countries = Array.from(new Set(nodes.map(n => translateCountry(n.country)).filter(Boolean))).sort();
   
   const currentOptions = Array.from(select.options).map(o => o.value).filter(Boolean);
   if (JSON.stringify(countries) === JSON.stringify(currentOptions)) {
@@ -3097,7 +3105,7 @@ function getFilteredNodes() {
   const selectedStatus = $("status_filter").value;
   return nodes.filter(n => {
     if (!n) return false;
-    if (selectedCountry && n.country !== selectedCountry) {
+    if (selectedCountry && translateCountry(n.country) !== selectedCountry) {
       return false;
     }
     if (selectedIpType) {
@@ -3311,15 +3319,14 @@ function render(){
       return `<tr ${rowClass}>
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
         <td>${latencyText}</td>
-        <td class="mono">${esc(n.ip||n.remote_host)}:${n.remote_port||""}</td>
-        <td>${esc(displayLocation)}</td>
-        <td class="mono" style="font-size:12px; color:var(--text-secondary);">${esc(n.asn||"-")}</td>
-        <td>${esc(n.owner||n.as_name||"-")}</td>
-        <td>${esc(translateQuality(n.quality))}</td>
-        <td>${esc(translateIpType(n.ip_type))}</td>
+        <td class="mono" style="white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.ip||n.remote_host)}:${n.remote_port||""}">${esc(n.ip||n.remote_host)}:${n.remote_port||""}</td>
+        <td style="white-space: nowrap; max-width: 180px; overflow: hidden; text-overflow: ellipsis;" title="${esc(displayLocation)}">${esc(displayLocation)}</td>
+        <td class="mono" style="font-size:12px; color:var(--text-secondary); white-space: nowrap; max-width: 100px; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.asn||"-")}">${esc(n.asn||"-")}</td>
+        <td style="white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.owner||n.as_name||"-")}">${esc(n.owner||n.as_name||"-")}</td>
+        <td style="white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis;" title="${esc(translateQuality(n.quality))}">${esc(translateQuality(n.quality))}</td>
+        <td style="white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis;" title="${esc(translateIpType(n.ip_type))}">${esc(translateIpType(n.ip_type))}</td>
         <td>
           <div class="table-actions">
-            ${testBtn}
             ${connectBtn}
           </div>
         </td>
@@ -3391,6 +3398,7 @@ function startConnectionPolling() {
       nodes = data.nodes || [];
       state = data.state || {};
       stableSortNodes();
+      updateCountryFilter();
       render();
       
       if (!state.is_connecting) {
@@ -3464,51 +3472,7 @@ async function disconnectNode(){
   }
 }
 
-// Batch test button implementation
-$("btn_batch_test").onclick = async () => {
-  const pageNodes = currentPageNodes || [];
-  if (pageNodes.length === 0) {
-    alert("当前页面没有可供测试的备选节点");
-    return;
-  }
-  
-  const btn = $("btn_batch_test");
-  btn.disabled = true;
-  btn.innerHTML = `<svg style="animation: spin 1s linear infinite; width: 14px; height: 14px; display: inline-block; margin-right: 6px; vertical-align: middle;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.2" fill="none"></circle><path d="M4 12a8 8 0 018-8" stroke="currentColor" fill="none"></path></svg>测试中...`;
-  
-  pageNodes.forEach(n => testingNodeIds.add(n.id));
-  render();
-  
-  const testPromises = pageNodes.map(async (n) => {
-    const id = n.id;
-    try {
-      const response = await fetch("./api/test_node", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id })
-      });
-      const result = await response.json();
-      if (result.ok && result.node) {
-        const idx = nodes.findIndex(item => item.id === id);
-        if (idx !== -1) {
-          nodes[idx] = result.node;
-        }
-      }
-    } catch (e) {
-    } finally {
-      testingNodeIds.delete(id);
-      render();
-    }
-  });
-  
-  try {
-    await Promise.all(testPromises);
-  } catch (e) {
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> 批量测试本页`;
-  }
-};
+
 
 
 
@@ -3641,8 +3605,9 @@ function populateRoutingCountries() {
   if (!select) return;
   const countMap = {};
   nodes.forEach(n => {
-    if (n.country) {
-      countMap[n.country] = (countMap[n.country] || 0) + 1;
+    const c = translateCountry(n.country);
+    if (c) {
+      countMap[c] = (countMap[c] || 0) + 1;
     }
   });
   
@@ -3657,7 +3622,7 @@ function populateRoutingCountries() {
     const mode = state.routing_mode || "auto";
     const modeSelect = $("net_routing_mode");
     if (modeSelect) modeSelect.value = mode;
-    select.value = state.force_country || "";
+    select.value = translateCountry(state.force_country) || "";
     handleRoutingModeChange(mode);
   }
 }
@@ -3879,6 +3844,7 @@ setInterval(async () => {
       nodes = d.nodes || [];
       state = d.state || {};
       stableSortNodes();
+      updateCountryFilter();
       render();
     } catch(e) {}
   }
