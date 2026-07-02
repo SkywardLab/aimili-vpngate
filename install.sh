@@ -15,32 +15,40 @@ fi
 
 # 2. Check OS distribution and set package manager
 OS_TYPE=""
+OS_ID_LIKE=""
 PKG_MGR=""
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS_TYPE=$ID
+    OS_ID_LIKE="${ID_LIKE:-}"
 fi
 
-case "$OS_TYPE" in
-    ubuntu|debian)
-        PKG_MGR="apt-get"
-        export DEBIAN_FRONTEND=noninteractive
-        ;;
-    alpine)
-        PKG_MGR="apk"
-        ;;
-    centos|rhel|rocky|almalinux|fedora|ol|amzn)
-        if command -v dnf >/dev/null 2>&1; then
-            PKG_MGR="dnf"
-        else
-            PKG_MGR="yum"
-        fi
-        ;;
-    *)
-        echo -e "${RED}错误: 不支持的操作系统 ($OS_TYPE)！目前仅支持 Ubuntu/Debian/Alpine/CentOS/RHEL/Rocky/AlmaLinux/Fedora/OracleLinux/AmazonLinux。${PLAIN}"
-        exit 1
-        ;;
-esac
+for os_family in $OS_TYPE $OS_ID_LIKE; do
+    case "$os_family" in
+        ubuntu|debian)
+            PKG_MGR="apt-get"
+            export DEBIAN_FRONTEND=noninteractive
+            break
+            ;;
+        alpine)
+            PKG_MGR="apk"
+            break
+            ;;
+        centos|rhel|rocky|almalinux|fedora|ol|amzn)
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MGR="dnf"
+            else
+                PKG_MGR="yum"
+            fi
+            break
+            ;;
+    esac
+done
+
+if [ -z "$PKG_MGR" ]; then
+    echo -e "${RED}错误: 不支持的操作系统 ($OS_TYPE)！目前支持 Ubuntu/Debian/Alpine/CentOS/RHEL/Rocky/AlmaLinux/Fedora/OracleLinux/AmazonLinux 及其兼容衍生发行版。${PLAIN}"
+    exit 1
+fi
 
 echo -e "${BLUE}==========================================================${PLAIN}"
 echo -e "${BLUE}        欢迎使用 AimiliVPN 一键源码部署与管理脚本${PLAIN}"
