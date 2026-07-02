@@ -1964,29 +1964,26 @@ LOGIN_HTML = r"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AimiliVPN - 安全登录</title>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-dark: #090d16;
-      --bg-surface: rgba(15, 23, 42, 0.45);
-      --border-color: rgba(255, 255, 255, 0.08);
-      --text-primary: #f8fafc;
-      --text-secondary: #94a3b8;
-      --primary: #6366f1;
-      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-      --primary-hover: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+      --bg-dark: #f5f5f7;
+      --bg-surface: #ffffff;
+      --bg-surface-hover: #fafafc;
+      --border-color: rgba(0, 0, 0, 0.08);
+      --border-color-hover: #d2d2d7;
+      --text-primary: #1d1d1f;
+      --text-secondary: #7a7a7a;
+      --primary: #0066cc;
+      --primary-focus: #0071e3;
       --success: #10b981;
-      --danger: #f43f5e;
+      --danger: #d70015;
     }
 
     body {
       margin: 0;
       padding: 0;
-      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background-color: var(--bg-dark);
-      background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
       height: 100vh;
       display: flex;
       align-items: center;
@@ -2003,12 +2000,10 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .login-card {
       background: var(--bg-surface);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--border-color);
-      border-radius: 20px;
+      border-radius: 18px;
       padding: 40px 32px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+      box-shadow: none;
       text-align: center;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
@@ -2016,9 +2011,9 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .brand-logo {
       width: 64px;
       height: 64px;
-      background: rgba(99, 102, 241, 0.1);
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-radius: 16px;
+      background: var(--surface-pearl, #fafafc);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2032,7 +2027,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       position: absolute;
       width: 100%;
       height: 100%;
-      border-radius: 16px;
+      border-radius: 18px;
       border: 1px solid var(--success);
       opacity: 0.5;
       animation: ripple 2s infinite ease-out;
@@ -2045,10 +2040,10 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .login-title {
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--text-primary);
       margin: 0 0 8px 0;
-      letter-spacing: 0.5px;
+      letter-spacing: -0.28px;
     }
 
     .login-subtitle {
@@ -2064,7 +2059,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .form-label {
       display: block;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       color: var(--text-secondary);
       margin-bottom: 8px;
@@ -2078,27 +2073,27 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .input-field {
       width: 100%;
       height: 48px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
-      border-radius: 10px;
+      border-radius: 9999px;
       padding: 0 16px;
       box-sizing: border-box;
       color: var(--text-primary);
       font-family: inherit;
-      font-size: 15px;
+      font-size: 17px;
       outline: none;
       transition: all 0.2s ease;
     }
 
     .input-field:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.6);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .error-message {
       color: var(--danger);
-      font-size: 13px;
+      font-size: 14px;
       margin-top: 8px;
       min-height: 18px;
       text-align: left;
@@ -2109,12 +2104,12 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .login-btn {
       width: 100%;
       height: 48px;
-      background: var(--primary-gradient);
+      background: var(--primary);
       border: none;
-      border-radius: 10px;
+      border-radius: 9999px;
       color: white;
       font-family: inherit;
-      font-size: 15px;
+      font-size: 17px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s ease;
@@ -2122,17 +2117,17 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+      box-shadow: none;
     }
 
     .login-btn:hover {
-      background: var(--primary-hover);
-      transform: translateY(-1px);
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+      background: var(--primary-focus);
+      transform: scale(0.95);
+      box-shadow: none;
     }
 
     .login-btn:active {
-      transform: translateY(1px);
+      transform: scale(0.95);
     }
 
     .login-btn:disabled {
@@ -2222,48 +2217,42 @@ INDEX_HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AimiliVPN 节点池管理系统</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
     :root {
-      --bg-dark: #0b0f19;
-      --bg-surface: rgba(22, 30, 49, 0.6);
-      --bg-surface-hover: rgba(30, 41, 67, 0.85);
-      --border-color: rgba(255, 255, 255, 0.08);
-      --border-color-hover: rgba(99, 102, 241, 0.35);
-      --text-primary: #f3f4f6;
-      --text-secondary: #9ca3af;
-      --primary: #6366f1;
-      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-      --primary-hover: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
-      --success: #10b981;
-      --success-gradient: linear-gradient(135deg, #34d399 0%, #059669 100%);
-      --danger: #f43f5e;
-      --danger-gradient: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
-      --warning: #f59e0b;
-      --warning-gradient: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
-      --active-row-bg: rgba(16, 185, 129, 0.06);
-      --active-row-border: rgba(16, 185, 129, 0.25);
+      --bg-dark: #f5f5f7;
+      --bg-surface: #ffffff;
+      --bg-surface-hover: #fafafc;
+      --border-color: rgba(0, 0, 0, 0.08);
+      --border-color-hover: #d2d2d7;
+      --text-primary: #1d1d1f;
+      --text-secondary: #7a7a7a;
+      --primary: #0066cc;
+      --primary-focus: #0071e3;
+      --primary-on-dark: #2997ff;
+      --success: #008f5a;
+      --danger: #d70015;
+      --warning: #b26a00;
+      --canvas: #ffffff;
+      --canvas-parchment: #f5f5f7;
+      --surface-pearl: #fafafc;
+      --active-row-bg: rgba(0, 143, 90, 0.07);
+      --active-row-border: rgba(0, 143, 90, 0.25);
     }
 
     body {
       margin: 0;
-      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background-color: var(--bg-dark);
-      background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%),
-        radial-gradient(at 50% 100%, rgba(79, 70, 229, 0.05) 0px, transparent 50%);
-      background-attachment: fixed;
       color: var(--text-primary);
+      font-size: 17px;
+      line-height: 1.47;
+      letter-spacing: -0.374px;
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
     }
 
     header {
       padding: 16px 32px;
-      background: rgba(11, 15, 25, 0.7);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: rgba(245, 245, 247, 0.8);
       border-bottom: 1px solid var(--border-color);
       display: flex;
       justify-content: space-between;
@@ -2281,11 +2270,9 @@ INDEX_HTML = r"""<!doctype html>
 
     h1 {
       font-size: 20px;
-      font-weight: 700;
+      font-weight: 600;
       margin: 0;
-      background: linear-gradient(135deg, #a5b4fc 0%, #6366f1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      background: transparent;
       letter-spacing: -0.5px;
       display: flex;
       align-items: center;
@@ -2293,7 +2280,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .status {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       margin-top: 4px;
       display: flex;
@@ -2318,17 +2305,17 @@ INDEX_HTML = r"""<!doctype html>
     button, .btn-telegram {
       height: 38px;
       border: 1px solid var(--border-color);
-      border-radius: 8px;
+      border-radius: 9999px;
       padding: 0 16px;
       font-weight: 600;
-      font-size: 13px;
+      font-size: 14px;
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--canvas);
       color: var(--text-primary);
       white-space: nowrap;
       text-decoration: none;
@@ -2336,46 +2323,50 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     button:hover {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.15);
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: var(--border-color-hover);
+      transform: scale(0.95);
     }
 
     .btn-telegram {
-      background: rgba(43, 162, 223, 0.15);
-      border: 1px solid rgba(43, 162, 223, 0.3);
-      color: #2ba2df;
+      background: transparent;
+      border: 1px solid var(--primary);
+      color: var(--primary);
     }
 
     .btn-telegram:hover {
-      background: rgba(43, 162, 223, 0.25);
-      border-color: rgba(43, 162, 223, 0.5);
-      color: #2ba2df;
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: var(--primary-focus);
+      color: var(--primary);
+      transform: scale(0.95);
     }
 
     .btn-primary {
-      background: var(--primary-gradient);
+      background: var(--primary);
       color: white;
       border: none;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+      box-shadow: none;
     }
 
     .btn-primary:hover {
-      background: var(--primary-hover);
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+      background: var(--primary-focus);
+      box-shadow: none;
+    }
+
+    button:active, .btn-telegram:active, .btn-primary:active {
+      transform: scale(0.95);
     }
 
     .btn-danger {
-      background: var(--danger-gradient);
+      background: var(--danger);
       color: white;
       border: none;
-      box-shadow: 0 4px 12px rgba(244, 63, 94, 0.2);
+      box-shadow: none;
     }
 
     .btn-danger:hover {
       opacity: 0.95;
-      box-shadow: 0 6px 16px rgba(244, 63, 94, 0.35);
+      box-shadow: none;
     }
 
     button:disabled {
@@ -2392,17 +2383,15 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .active-card {
-      background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(79, 70, 229, 0.04) 100%);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-radius: 16px;
+      background: var(--canvas);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
       padding: 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 24px;
-      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.12);
+      box-shadow: none;
       transition: all 0.3s ease;
       width: 100%;
       box-sizing: border-box;
@@ -2423,10 +2412,10 @@ INDEX_HTML = r"""<!doctype html>
     
     .active-card-title {
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: #a5b4fc;
+      color: var(--primary);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -2434,14 +2423,14 @@ INDEX_HTML = r"""<!doctype html>
     
     .active-card-value {
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--text-primary);
     }
     
     .active-card-meta {
       display: flex;
       gap: 16px;
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       flex-wrap: wrap;
     }
@@ -2459,10 +2448,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .stat {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
+      border-radius: 18px;
       padding: 20px;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
@@ -2475,8 +2462,8 @@ INDEX_HTML = r"""<!doctype html>
     .stat:hover {
       background: var(--bg-surface-hover);
       border-color: var(--border-color-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.1);
+      transform: scale(0.995);
+      box-shadow: none;
     }
 
     .stat-info {
@@ -2486,16 +2473,14 @@ INDEX_HTML = r"""<!doctype html>
 
     .stat strong {
       font-size: 32px;
-      font-weight: 700;
+      font-weight: 600;
       display: block;
       margin-bottom: 4px;
-      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--text-primary);
     }
 
     .stat span {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       font-weight: 500;
     }
@@ -2503,12 +2488,12 @@ INDEX_HTML = r"""<!doctype html>
     .stat-icon-wrapper {
       width: 44px;
       height: 44px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.04);
+      border-radius: 9999px;
+      background: var(--canvas);
       display: flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(0, 0, 0, 0.08);
     }
 
     .stat-icon {
@@ -2526,7 +2511,7 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       gap: 6px;
       padding: 4px 10px;
-      background: rgba(255, 255, 255, 0.05);
+      background: var(--surface-pearl);
       border: 1px solid var(--border-color);
       border-radius: 6px;
       color: var(--text-secondary);
@@ -2538,10 +2523,10 @@ INDEX_HTML = r"""<!doctype html>
       box-sizing: border-box;
     }
     .header-badge-link:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--canvas);
       border-color: var(--border-color-hover);
       color: var(--text-primary);
-      transform: translateY(-1px);
+      transform: scale(0.95);
     }
     .flex-row-container {
       display: flex;
@@ -2554,146 +2539,11 @@ INDEX_HTML = r"""<!doctype html>
       min-width: 320px;
       margin-bottom: 0 !important;
     }
-    .vps-recommend-tab {
-      position: fixed;
-      right: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 38px;
-      background: var(--primary-gradient);
-      border: 1px solid var(--border-color-hover);
-      border-right: none;
-      border-radius: 8px 0 0 8px;
-      padding: 16px 6px;
-      color: white;
-      font-weight: 700;
-      font-size: 13px;
-      line-height: 1.4;
-      text-align: center;
-      cursor: pointer;
-      z-index: 999;
-      box-shadow: -4px 0 20px rgba(99, 102, 241, 0.3);
-      transition: all 0.3s ease;
-      writing-mode: vertical-rl;
-      text-orientation: mixed;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-    }
-    .vps-recommend-tab:hover {
-      padding-right: 10px;
-      box-shadow: -4px 0 25px rgba(99, 102, 241, 0.5);
-    }
-
-    .vps-links {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-    }
-    
-    @media (max-width: 576px) {
-      .vps-links {
-        grid-template-columns: 1fr;
-      }
-    }
-    
-    .vps-item {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      border-radius: 12px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      justify-content: space-between;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    }
-    
-    .vps-item:hover {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: rgba(99, 102, 241, 0.3);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 30px rgba(99, 102, 241, 0.1);
-    }
-    
-    .vps-tag {
-      font-size: 11px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 6px;
-      width: fit-content;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .tag-normal {
-      background: rgba(99, 102, 241, 0.15);
-      color: #a5b4fc;
-      border: 1px solid rgba(99, 102, 241, 0.2);
-    }
-    
-    .tag-premium {
-      background: rgba(16, 185, 129, 0.15);
-      color: #6ee7b7;
-      border: 1px solid rgba(16, 185, 129, 0.2);
-    }
-    
-    .vps-desc {
-      font-size: 13px;
-      color: var(--text-secondary);
-      line-height: 1.6;
-      flex: 1;
-    }
-    
-    .vps-btn {
-      align-self: stretch;
-      text-decoration: none;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text-primary);
-      font-size: 12px;
-      font-weight: 600;
-      padding: 8px 16px;
-      border-radius: 8px;
-      transition: all 0.2s ease;
-      text-align: center;
-    }
-    
-    .vps-item:hover .vps-btn {
-      background: var(--primary-gradient);
-      border-color: transparent;
-      color: white;
-      box-shadow: 0 4px 10px rgba(99, 102, 241, 0.2);
-    }
-    
-    .vps-footer {
-      border-top: 1px dashed rgba(255, 255, 255, 0.08);
-      padding-top: 12px;
-      font-size: 13px;
-      color: var(--text-secondary);
-      text-align: center;
-    }
-    
-    .forum-link {
-      color: #818cf8;
-      font-weight: 700;
-      text-decoration: none;
-      transition: color 0.2s ease;
-    }
-    
-    .forum-link:hover {
-      color: #a5b4fc;
-      text-decoration: underline;
-    }
 
     .toolbar {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
+      border-radius: 18px;
       padding: 16px;
       margin-bottom: 24px;
       display: flex;
@@ -2705,7 +2555,7 @@ INDEX_HTML = r"""<!doctype html>
     .toolbar select {
       width: 180px;
       height: 42px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 12px;
@@ -2719,15 +2569,15 @@ INDEX_HTML = r"""<!doctype html>
 
     .toolbar select:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-      background: #0f172a;
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .toolbar input {
       flex: 1;
       min-width: 250px;
       height: 42px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 16px;
@@ -2740,18 +2590,16 @@ INDEX_HTML = r"""<!doctype html>
     .toolbar input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.8);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .table-wrapper {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 16px;
+      border-radius: 18px;
       overflow: hidden;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      box-shadow: none;
     }
 
     .table-container {
@@ -2772,9 +2620,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     th {
-      background: rgba(17, 24, 39, 0.4);
+      background: var(--surface-pearl);
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.8px;
       color: var(--text-secondary);
@@ -2788,7 +2636,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     tr:hover {
-      background: rgba(255, 255, 255, 0.015);
+      background: var(--surface-pearl);
     }
 
     .active-row {
@@ -2860,9 +2708,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .current-badge {
-      background: rgba(99, 102, 241, 0.15);
-      color: #818cf8;
-      border-color: rgba(99, 102, 241, 0.3);
+      background: rgba(0, 102, 204, 0.08);
+      color: var(--primary);
+      border-color: rgba(0, 102, 204, 0.3);
     }
 
     .table-actions {
@@ -2872,8 +2720,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .connect-btn {
       background: transparent;
-      color: #818cf8;
-      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: var(--primary);
+      border: 1px solid var(--primary);
       border-radius: 6px;
       padding: 0 12px;
       height: 30px;
@@ -2884,10 +2732,10 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .connect-btn:hover:not(:disabled) {
-      background: var(--primary-gradient);
+      background: var(--primary);
       color: white;
       border-color: transparent;
-      box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3);
+      box-shadow: none;
     }
 
     .connect-btn:disabled {
@@ -2909,10 +2757,10 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .test-btn:hover:not(:disabled) {
-      background: var(--success-gradient);
+      background: var(--success);
       color: white;
       border-color: transparent;
-      box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);
+      box-shadow: none;
     }
 
     .test-btn:disabled {
@@ -2922,8 +2770,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .mono {
       font-family: 'JetBrains Mono', Consolas, monospace;
-      font-size: 13px;
-      color: #e2e8f0;
+      font-size: 14px;
+      color: var(--text-primary);
     }
 
     .latency-val {
@@ -2993,10 +2841,10 @@ INDEX_HTML = r"""<!doctype html>
       right: 0;
       margin-top: 6px;
       min-width: 140px;
-      background: rgba(22, 30, 49, 0.95);
+      background: var(--canvas);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      box-shadow: none;
       z-index: 1000;
       overflow: hidden;
       backdrop-filter: blur(10px);
@@ -3009,12 +2857,12 @@ INDEX_HTML = r"""<!doctype html>
       padding: 10px 16px;
       color: var(--text-primary);
       text-decoration: none;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       transition: background 0.2s;
     }
     .dropdown-content a:hover {
-      background: rgba(255,255,255,0.08);
+      background: var(--surface-pearl);
     }
     
     /* Modal styles */
@@ -3027,20 +2875,20 @@ INDEX_HTML = r"""<!doctype html>
       width: 100%;
       height: 100%;
       overflow: auto;
-      background-color: rgba(9, 13, 22, 0.7);
+      background-color: rgba(245, 245, 247, 0.72);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       align-items: center;
       justify-content: center;
     }
     .modal-content {
-      background: rgba(22, 30, 49, 0.9);
+      background: var(--canvas);
       border: 1px solid var(--border-color);
-      border-radius: 20px;
+      border-radius: 18px;
       width: 90%;
       max-width: 480px;
       padding: 32px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      box-shadow: none;
       position: relative;
       box-sizing: border-box;
       animation: modalFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3057,7 +2905,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .form-label {
       display: block;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       color: var(--text-secondary);
       margin-bottom: 8px;
@@ -3066,7 +2914,7 @@ INDEX_HTML = r"""<!doctype html>
     .input-field {
       width: 100%;
       height: 40px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 12px;
@@ -3079,12 +2927,12 @@ INDEX_HTML = r"""<!doctype html>
     }
     .input-field:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.6);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
     select option {
-      background-color: #0f172a;
-      color: #f8fafc;
+      background-color: #ffffff;
+      color: var(--text-primary);
     }
     
     /* Option Card Styles for Proxy/Routing Settings */
@@ -3102,9 +2950,9 @@ INDEX_HTML = r"""<!doctype html>
     }
     
     .option-card {
-      background: rgba(255, 255, 255, 0.02);
+      background: var(--surface-pearl);
       border: 1px solid var(--border-color);
-      border-radius: 10px;
+      border-radius: 9999px;
       padding: 12px 14px;
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3114,19 +2962,19 @@ INDEX_HTML = r"""<!doctype html>
     }
     
     .option-card:hover {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: rgba(99, 102, 241, 0.25);
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: rgba(0, 102, 204, 0.25);
+      transform: scale(0.95);
     }
     
     .option-card.active {
-      background: rgba(99, 102, 241, 0.08);
+      background: rgba(0, 102, 204, 0.06);
       border-color: var(--primary);
-      box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
+      box-shadow: none;
     }
     
     .option-card-title {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       color: var(--text-primary);
       margin-bottom: 4px;
@@ -3137,13 +2985,58 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text-secondary);
       line-height: 1.3;
     }
+
+
+    /* DESIGN.md Apple-style overrides for inline-heavy panels */
+    #favorites_panel,
+    #gateway_services_list > div,
+    #net_routing_warning {
+      background: var(--canvas) !important;
+      border-color: var(--border-color) !important;
+      border-radius: 18px !important;
+      color: var(--text-secondary) !important;
+      box-shadow: none !important;
+    }
+
+    .modal button[style*="border-radius: 50%"] {
+      border-radius: 9999px !important;
+      background: var(--surface-pearl) !important;
+    }
+
+    input, select, textarea, .input-field, .toolbar select, .toolbar input {
+      background: var(--canvas) !important;
+      color: var(--text-primary) !important;
+      border-color: var(--border-color) !important;
+      border-radius: 9999px !important;
+    }
+
+    input:focus, select:focus, textarea:focus, .input-field:focus, .toolbar select:focus, .toolbar input:focus {
+      border-color: var(--primary-focus) !important;
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18) !important;
+      outline: none !important;
+    }
+
+    .btn-primary,
+    .connect-btn:hover:not(:disabled),
+    .test-btn:hover:not(:disabled) {
+      background: var(--primary) !important;
+      border-color: var(--primary) !important;
+      color: #ffffff !important;
+      border-radius: 9999px !important;
+      box-shadow: none !important;
+    }
+
+    .connect-btn, .test-btn, .toolbar-btn, .header-badge-link {
+      border-radius: 9999px !important;
+      box-shadow: none !important;
+    }
   </style>
 </head>
 <body>
 <header>
   <div class="brand">
     <h1>
-      <svg xmlns="http://www.w3.org/2000/svg" style="width:24px; height:24px; color:#818cf8;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" style="width:24px; height:24px; color:var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
       AimiliVPN 节点管理系统
     </h1>
     <div id="status" class="status" style="display: none;"><span class="status-dot"></span>服务加载中...</div>
@@ -3151,7 +3044,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="btn-group">
 
     <div class="dropdown">
-      <button id="github_btn" class="btn-primary" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
+      <button id="github_btn" class="btn-primary" style="background: rgba(0, 0, 0, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align: middle; margin-right: 4px;"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         GITHUB
         <svg xmlns="http://www.w3.org/2000/svg" style="width:12px; height:12px; margin-left: 2px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
@@ -3165,12 +3058,12 @@ INDEX_HTML = r"""<!doctype html>
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align: middle; margin-right: 4px;"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8.287 5.906c-.778.324-2.334.994-4.666 2.01-.378.15-.577.298-.595.442-.03.243.275.339.69.47l.175.055c.408.133.958.288 1.243.294.26.006.549-.1.868-.32 2.179-1.471 3.304-2.214 3.374-2.23.05-.012.12-.026.166.016.047.041.042.12.037.141-.03.129-1.227 1.241-1.846 1.817-.193.18-.33.307-.358.336-.063.065-.129.13-.19.193-.34.347-.597.609-.043.974.265.175.474.319.684.457.228.15.457.301.765.503.074.049.143.098.207.143.297.206.58.404.916.373.195-.018.398-.2.502-.754.25-1.332.74-4.22.842-5.281.01-.088.001-.22-.103-.312-.104-.092-.252-.09-.323-.087a1.52 1.52 0 0 0-.254.04z"/></svg>
       Telegram
     </a>
-    <button id="refresh" class="btn-primary" style="background: var(--success-gradient);">
+    <button id="refresh" class="btn-primary" style="background: var(--primary);">
       <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.5" /></svg>
       更新节点
     </button>
     <div class="dropdown">
-      <button id="admin_btn" class="btn-primary" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
+      <button id="admin_btn" class="btn-primary" style="background: rgba(0, 0, 0, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
         <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
         管理员
         <svg xmlns="http://www.w3.org/2000/svg" style="width:12px; height:12px; margin-left: 2px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
@@ -3192,7 +3085,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
           日志
         </a>
-        <a href="javascript:void(0)" onclick="logoutAdmin()" style="color: var(--danger); border-top: 1px solid rgba(255,255,255,0.05);">
+        <a href="javascript:void(0)" onclick="logoutAdmin()" style="color: var(--danger); border-top: 1px solid #fafafc;">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           退出
         </a>
@@ -3231,7 +3124,7 @@ INDEX_HTML = r"""<!doctype html>
       收藏菜单
     </button>
   </section>
-  <div id="favorites_panel" style="display: none; background: rgba(22, 30, 49, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; margin-bottom: 20px; animation: modalFadeIn 0.25s ease-out;">
+  <div id="favorites_panel" style="display: none; background: #ffffff; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; margin-bottom: 20px; animation: modalFadeIn 0.25s ease-out;">
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
         <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -3249,7 +3142,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
       </div>
       
-      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;">
+      <div style="border-top: 1px solid rgba(0,0,0,0.08); padding-top: 16px;">
         <div style="padding: 10px 14px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; font-size: 12px; color: var(--warning); line-height: 1.5;">
           <strong>仅用收藏是强锁定模式。</strong>开启后只会连接收藏节点；如果收藏节点全部不可用，系统不会切换到非收藏节点。
         </div>
@@ -3299,7 +3192,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
           网页安全
         </h3>
-        <button type="button" onclick="closeCredentialsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeCredentialsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3344,7 +3237,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           代理设置
         </h3>
-        <button type="button" onclick="closeNetworkModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeNetworkModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3358,7 +3251,7 @@ INDEX_HTML = r"""<!doctype html>
           <input type="number" id="net_proxy_port" class="input-field" required min="1024" max="65535" placeholder="7928">
         </div>
 
-        <div style="border-top: 1px dashed rgba(255,255,255,0.08); padding-top: 16px; margin-bottom: 16px;">
+        <div style="border-top: 1px dashed #fafafc; padding-top: 16px; margin-bottom: 16px;">
           <div class="form-group" style="margin-bottom: 16px;">
             <label class="form-label">IP 出站路由模式</label>
             <input type="hidden" id="net_routing_mode" value="auto">
@@ -3380,7 +3273,7 @@ INDEX_HTML = r"""<!doctype html>
           
           <div id="net_force_country_group" class="form-group" style="margin-bottom: 16px; display: none;">
             <label class="form-label" for="net_force_country">锁定国家地区</label>
-            <select id="net_force_country" class="input-field" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); color: var(--text-primary); outline: none; cursor: pointer; width: 100%; height: 40px; border-radius: 8px; padding: 0 12px;">
+            <select id="net_force_country" class="input-field" style="background: #ffffff; border: 1px solid var(--border-color); color: var(--text-primary); outline: none; cursor: pointer; width: 100%; height: 40px; border-radius: 8px; padding: 0 12px;">
               <option value="">正在加载节点国家...</option>
             </select>
           </div>
@@ -3404,7 +3297,7 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
           
-          <div id="net_routing_warning" style="font-size: 12px; color: var(--text-secondary); line-height: 1.4; padding: 8px 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; margin-top: 8px;">
+          <div id="net_routing_warning" style="font-size: 12px; color: var(--text-secondary); line-height: 1.4; padding: 8px 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid #fafafc; border-radius: 6px; margin-top: 8px;">
             ℹ️ <strong>自动配置</strong>：全自动测试并选择最佳IP。在使用过程中，如果当前连接节点没有失效，将不再更换IP；如果当前节点失效，系统将立刻秒级自动漂移到其他最快的可用节点。
           </div>
         </div>
@@ -3418,51 +3311,6 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 
 
-  <!-- VPS 购买推荐 Modal -->
-  <div id="vps_recommend_modal" class="modal">
-    <div class="modal-content" style="max-width: 640px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-        <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--warning);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364.364l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
-          VPS 购买推荐
-        </h3>
-        <button type="button" onclick="closeVpsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-      
-      <div class="vps-links">
-        <div class="vps-item">
-          <span class="vps-tag tag-normal">RNVPS (RackNerd) 推荐</span>
-          <span class="vps-desc">超低折扣价格，性价比极高，日常使用实惠方便，海外多机房可选，非常适合普通大众用户。</span>
-          <a href="https://my.racknerd.com/aff.php?aff=18708" target="_blank" class="vps-btn">点击进入官网</a>
-        </div>
-        <div class="vps-item">
-          <span class="vps-tag tag-premium">搬瓦工 (Bandwagon) 推荐</span>
-          <span class="vps-desc">直连三网顶级专线，经典高带宽 CN2 GIA/9929 优化线路，极致速度且超凡稳定，高端用户首选。</span>
-          <a href="https://bandwagonhost.com/aff.php?aff=81790" target="_blank" class="vps-btn">点击进入官网</a>
-        </div>
-      </div>
-      
-      <div class="vps-footer" style="margin-top: 20px;">
-        官方技术支持及优质资源交流论坛：<a href="https://339936.xyz" target="_blank" class="forum-link">339936.xyz</a>
-      </div>
-
-      <div class="vps-footer" style="margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px; text-align: left; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-        <div style="font-weight: bold; color: var(--text-primary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-          🎁 捐赠支持项目开发：
-        </div>
-        <div style="font-family: monospace; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 6px; margin-top: 6px; word-break: break-all; select-all: true;">
-          <span style="color: var(--primary); font-weight: bold;">BNB (BSC):</span> 0xB6d78c42CEB0687A31B8cfEBE4b51b6eB8953C17<br>
-          <span style="color: var(--primary); font-weight: bold;">TRX (TRC20):</span> TSdzCW6JvsrqcppodYjhSrku4mYmDJ9pxf
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="vps-recommend-tab" onclick="openVpsModal()">VPS购买推荐</div>
-
   <!-- Gateway Modal (网关自检与代理测试) -->
   <div id="gateway_modal" class="modal">
     <div class="modal-content" style="max-width: 600px; width: 90%;">
@@ -3471,7 +3319,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
           网关设置与自检
         </h3>
-        <button type="button" onclick="closeGatewayModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeGatewayModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3485,12 +3333,12 @@ INDEX_HTML = r"""<!doctype html>
       </div>
 
       <!-- 分割线 -->
-      <div style="border-top: 1px dashed rgba(255, 255, 255, 0.08); margin: 20px 0;"></div>
+      <div style="border-top: 1px dashed rgba(0, 0, 0, 0.08); margin: 20px 0;"></div>
 
       <!-- 本地代理出口检测 -->
       <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-          <div class="stat-icon-wrapper" style="background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.2); width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;">
+          <div class="stat-icon-wrapper" style="background: rgba(0, 102, 204, 0.08); border-color: rgba(0, 113, 227, 0.18); width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;">
             <svg xmlns="http://www.w3.org/2000/svg" class="stat-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="color: var(--primary); width: 18px; height: 18px;"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071a10.5 10.5 0 0114.14 0M1.414 8.05a16 16 0 0121.172 0" /></svg>
           </div>
           <div>
@@ -3534,7 +3382,7 @@ INDEX_HTML = r"""<!doctype html>
         
         <div style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
           <label class="form-label" for="log_filter_select" style="margin: 0; font-size: 13px; color: var(--text-secondary);">日志筛选:</label>
-          <select id="log_filter_select" class="input-field" style="width: 140px; height: 32px; font-size: 12px; border-radius: 6px; padding: 0 8px; background: rgba(255, 255, 255, 0.03);" onchange="filterAndRenderLogs()">
+          <select id="log_filter_select" class="input-field" style="width: 140px; height: 32px; font-size: 12px; border-radius: 6px; padding: 0 8px; background: #ffffff;" onchange="filterAndRenderLogs()">
             <option value="all">全部日志</option>
             <option value="proxy">代理相关 (Proxy)</option>
             <option value="vpn">VPN 连接 (VPN)</option>
@@ -3542,13 +3390,13 @@ INDEX_HTML = r"""<!doctype html>
           </select>
         </div>
         
-        <button type="button" onclick="closeLogsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeLogsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
 
       <!-- Terminal Log Container -->
-      <div id="log_terminal_container" style="background: #050811; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; height: 400px; padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', Consolas, Courier, monospace; font-size: 12px; line-height: 1.5; text-align: left; white-space: pre-wrap; word-break: break-all; color: #a5b4fc; box-shadow: inset 0 4px 20px rgba(0,0,0,0.8); position: relative; margin-bottom: 20px;">
+      <div id="log_terminal_container" style="background: #050811; border: 1px solid #fafafc; border-radius: 10px; height: 400px; padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', Consolas, Courier, monospace; font-size: 12px; line-height: 1.5; text-align: left; white-space: pre-wrap; word-break: break-all; color: var(--primary); box-shadow: inset 0 4px 20px rgba(0,0,0,0.8); position: relative; margin-bottom: 20px;">
         <div style="color: var(--text-secondary); text-align: center; margin-top: 150px;">
           暂无今日运行日志记录。
         </div>
@@ -3556,11 +3404,11 @@ INDEX_HTML = r"""<!doctype html>
 
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div style="display: flex; gap: 8px;">
-          <button type="button" onclick="copyLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: rgba(255,255,255,0.05); color: var(--text-primary); border: 1px solid var(--border-color);">
+          <button type="button" onclick="copyLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: #fafafc; color: var(--text-primary); border: 1px solid var(--border-color);">
             <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px; margin-right: 4px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
             一键复制
           </button>
-          <button type="button" onclick="exportLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: rgba(255,255,255,0.05); color: var(--text-primary); border: 1px solid var(--border-color);">
+          <button type="button" onclick="exportLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: #fafafc; color: var(--text-primary); border: 1px solid var(--border-color);">
             <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px; margin-right: 4px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             导出日志
           </button>
@@ -3918,7 +3766,7 @@ function render(){
       // Connect button is disabled if probe status is "unavailable" and not already active, or if we are already connecting
       const isUnavailable = n.probe_status === "unavailable";
       const connectBtn = isCurrentlyActive 
-        ? `<button class="connect-btn" disabled style="background: var(--success-gradient); color: white; cursor: default; opacity: 1;">已连接</button>`
+        ? `<button class="connect-btn" disabled style="background: var(--primary); color: white; cursor: default; opacity: 1;">已连接</button>`
         : `<button class="connect-btn" ${(isUnavailable || isTesting || state.is_connecting) ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''} onclick="connectNode('${esc(n.id)}')">切换</button>`;
       
       const favoriteIds = Array.isArray(state.favorite_node_ids) ? state.favorite_node_ids : [];
@@ -4271,13 +4119,13 @@ function updateFavPanelUI() {
     if (favRoutingBtn) {
       if (state.routing_mode === "favorites") {
         favRoutingBtn.textContent = "禁用仅用收藏出站";
-        favRoutingBtn.style.background = "var(--danger-gradient)";
+        favRoutingBtn.style.background = "var(--danger)";
         favRoutingBtn.style.borderColor = "transparent";
         favRoutingBtn.style.color = "#ffffff";
-        favRoutingBtn.style.boxShadow = "0 0 12px rgba(244, 63, 94, 0.3)";
+        favRoutingBtn.style.boxShadow = "none";
       } else {
         favRoutingBtn.textContent = "启用仅用收藏出站";
-        favRoutingBtn.style.background = "rgba(255,255,255,0.03)";
+        favRoutingBtn.style.background = "var(--surface-pearl)";
         favRoutingBtn.style.borderColor = "var(--border-color)";
         favRoutingBtn.style.color = "var(--text-primary)";
         favRoutingBtn.style.boxShadow = "none";
@@ -4380,7 +4228,7 @@ function handleRoutingModeChange(mode) {
     countryGroup.style.display = "none";
     warningDiv.style.color = "var(--text-secondary)";
     warningDiv.style.background = "rgba(255, 255, 255, 0.02)";
-    warningDiv.style.border = "1px solid rgba(255, 255, 255, 0.05)";
+    warningDiv.style.border = "1px solid #fafafc";
     warningDiv.innerHTML = `ℹ️ <strong>自动配置</strong>：全自动测试并选择最佳IP。在使用过程中，如果当前连接节点没有失效，将不再更换IP；如果当前节点失效，系统将立刻秒级自动漂移到其他最快的可用节点。`;
   }
 }
@@ -4630,14 +4478,6 @@ async function saveNetwork(e) {
 
 
 
-function openVpsModal() {
-  $("vps_recommend_modal").style.display = "flex";
-}
-
-function closeVpsModal() {
-  $("vps_recommend_modal").style.display = "none";
-}
-
 async function logoutAdmin() {
   try {
     const res = await fetch("./api/logout", { method: "POST" });
@@ -4777,7 +4617,7 @@ function filterAndRenderLogs() {
   }
   
   const linesHtml = filtered.map(l => {
-    let color = "#a5b4fc";
+    let color = "var(--primary)";
     if (l.module === "Proxy") color = "#38bdf8";
     if (l.module === "VPN") color = "#34d399";
     if (l.level === "WARNING") color = "#fbbf24";
