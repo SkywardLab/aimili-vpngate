@@ -20,6 +20,16 @@ class InstallScriptContractTest(unittest.TestCase):
     def test_unsupported_message_mentions_compatible_derivatives(self):
         self.assertTrue("兼容衍生发行版" in TEXT)
 
+    def test_default_repository_points_to_skywardlab(self):
+        expected_markers = [
+            "Default to the official repository (SkywardLab/aimili-vpngate)",
+            'DEFAULT_USER="SkywardLab"',
+            'DEFAULT_REPO="aimili-vpngate"',
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
 
 if __name__ == "__main__":
     unittest.main()
