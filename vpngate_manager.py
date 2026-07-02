@@ -3136,6 +3136,9 @@ INDEX_HTML = r"""<!doctype html>
       <option value="residential">住宅IP</option>
       <option value="hosting">机房IP</option>
     </select>
+    <button id="btn_test_all_nodes" class="toolbar-btn" type="button" onclick="testAllFilteredNodes()" style="height: 42px; gap: 6px;">
+      测试全部节点
+    </button>
     <button id="btn_favorites" class="toolbar-btn" type="button" onclick="toggleFavoritesView()" style="margin-left: auto; height: 42px; gap: 6px;">
       <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.907c.961 0 1.371 1.24.588 1.81l-3.97 2.883a1 1 0 00-.364 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.971-2.883a1 1 0 00-1.175 0l-3.97 2.883c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.364-1.118l-3.97-2.883c-.783-.57-.372-1.81.588-1.81h4.906a1 1 0 00.951-.69l1.519-4.674z" />
@@ -3443,6 +3446,8 @@ let nodes=[], state={}, testingNodeIds = new Set();
 let currentPage = 1;
 const pageSize = 99999;
 let currentPageNodes = [];
+const MANUAL_TEST_NODE_LIMIT = 5;
+let isTestingAllNodes = false;
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
@@ -3894,6 +3899,66 @@ async function testNode(btn, id, event){
   } catch (e) {
   } finally {
     testingNodeIds.delete(id);
+    render();
+  }
+}
+
+async function testAllFilteredNodes(){
+  if (isTestingAllNodes || state.is_connecting) return;
+  const btn = $("btn_test_all_nodes");
+  const ids = getFilteredNodes()
+    .filter(n => n && n.id && n.probe_status !== "testing")
+    .map(n => n.id);
+  if (!ids.length) {
+    alert("当前筛选结果中没有可测试节点");
+    return;
+  }
+
+  isTestingAllNodes = true;
+  const originalText = btn ? btn.textContent : "测试全部节点";
+  let done = 0;
+  const batchSize = MANUAL_TEST_NODE_LIMIT;
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = `检测中 ${done}/${ids.length}`;
+    }
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batchIds = ids.slice(i, i + batchSize);
+      batchIds.forEach(id => testingNodeIds.add(id));
+      render();
+      const response = await fetch("./api/test_nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: batchIds })
+      });
+      const result = await response.json();
+      if (!result.ok) {
+        throw new Error(result.error || "批量检测失败");
+      }
+      const updatedNodes = Array.isArray(result.nodes) ? result.nodes : [];
+      updatedNodes.forEach(updated => {
+        const idx = nodes.findIndex(n => n && n.id === updated.id);
+        if (idx !== -1) nodes[idx] = updated;
+      });
+      batchIds.forEach(id => testingNodeIds.delete(id));
+      done += batchIds.length;
+      stableSortNodes();
+      updateCountryFilter();
+      if (btn) btn.textContent = `检测中 ${done}/${ids.length}`;
+      render();
+    }
+  } catch (e) {
+    alert(e.message || "批量检测失败");
+  } finally {
+    ids.forEach(id => testingNodeIds.delete(id));
+    isTestingAllNodes = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+    stableSortNodes();
     render();
   }
 }

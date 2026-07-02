@@ -95,6 +95,20 @@ class UiContractTest(unittest.TestCase):
                 self.assertTrue(marker in TEXT, marker)
         self.assertTrue("const aScore = a.score || 0;" not in TEXT)
 
+    def test_batch_node_latency_test_button_and_script_exist(self):
+        expected_markers = [
+            'id="btn_test_all_nodes"',
+            "测试全部节点",
+            "async function testAllFilteredNodes()",
+            'fetch("./api/test_nodes"',
+            "const batchSize = MANUAL_TEST_NODE_LIMIT;",
+            "for (let i = 0; i < ids.length; i += batchSize)",
+            "检测中 ${done}/${ids.length}",
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
 
 
 if __name__ == "__main__":
