@@ -16,8 +16,37 @@ def parse_positive_int(value: str | None, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+def parse_positive_float(value: str | None, default: float) -> float:
+    try:
+        return max(0.1, float(value or default))
+    except (TypeError, ValueError):
+        return default
+
 MAX_PROXY_CONNECTIONS = parse_positive_int(os.environ.get("LOCAL_PROXY_MAX_CONNECTIONS"), 256)
+TUN_INTERFACE = os.environ.get("LOCAL_PROXY_TUN_INTERFACE", "tun0")
+TUN_READY_TIMEOUT_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN_READY_TIMEOUT"), 15.0)
+TUN_READY_POLL_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN_READY_POLL"), 0.25)
 proxy_connection_sem = threading.BoundedSemaphore(MAX_PROXY_CONNECTIONS)
+
+def tun_interface_exists(interface: str = TUN_INTERFACE) -> bool:
+    return os.path.exists(f"/sys/class/net/{interface}")
+
+def wait_for_tun_interface(
+    interface: str = TUN_INTERFACE,
+    timeout: float = TUN_READY_TIMEOUT_SECONDS,
+    interval: float = TUN_READY_POLL_SECONDS,
+    exists=tun_interface_exists,
+    sleep=time.sleep,
+    monotonic=time.monotonic,
+) -> bool:
+    deadline = monotonic() + max(0.0, timeout)
+    while True:
+        if exists(interface):
+            return True
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False
+        sleep(min(interval, remaining))
 
 def parse_int(value: Any) -> int:
     try:
@@ -109,12 +138,12 @@ def dns_query_over_tun0(host: str, qtype: int, dns_server: str, timeout: float) 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"tun0")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, TUN_INTERFACE.encode("utf-8"))
         except OSError as e:
             if "operation not permitted" in str(e).lower() or e.errno == 1:
-                print("[DNS 绑定失败] [错误代码 3006] DNS 解析绑定 tun0 权限不足，请确保程序以 root 权限运行！", flush=True)
+                print(f"[DNS 绑定失败] [错误代码 3006] DNS 解析绑定 {TUN_INTERFACE} 权限不足，请确保程序以 root 权限运行！", flush=True)
             elif "no such device" in str(e).lower() or e.errno == 19:
-                print("[DNS 绑定失败] [错误代码 3004] DNS 解析绑定 tun0 失败，网卡设备不存在，请检查 VPN 连接！", flush=True)
+                print(f"[DNS 绑定失败] [错误代码 3004] DNS 解析绑定 {TUN_INTERFACE} 失败，网卡设备不存在，请检查 VPN 连接！", flush=True)
             return None
         sock.sendto(packet, (dns_server, 53))
         resp, _ = sock.recvfrom(4096)
@@ -193,6 +222,8 @@ def resolve_dns_over_tun0(host: str, dns_server: str = "8.8.8.8", timeout: float
 
 def create_connection(address: tuple[str, int], timeout: float = 20) -> socket.socket:
     host, port = address
+    if not wait_for_tun_interface():
+        raise OSError(f"[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 等待虚拟网卡 {TUN_INTERFACE} 就绪超时，请确认 OpenVPN 核心已成功连接。")
     resolved_ip = resolve_dns_over_tun0(host)
     if resolved_ip:
         host = resolved_ip
@@ -204,15 +235,15 @@ def create_connection(address: tuple[str, int], timeout: float = 20) -> socket.s
         try:
             sock = socket.socket(af, socktype, proto)
             sock.settimeout(timeout)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"tun0")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, TUN_INTERFACE.encode("utf-8"))
             sock.connect(sa)
             return sock
         except OSError as e:
             err = e
             if "operation not permitted" in str(e).lower() or e.errno == 1:
-                err = OSError(f"[错误代码 3006] [ERR_PROXY_BIND_TUN_PERM_DENIED] 绑定虚拟网卡 tun0 失败，权限不足！必须以 root 权限运行，或者进程缺少 CAP_NET_RAW 权限。")
+                err = OSError(f"[错误代码 3006] [ERR_PROXY_BIND_TUN_PERM_DENIED] 绑定虚拟网卡 {TUN_INTERFACE} 失败，权限不足！必须以 root 权限运行，或者进程缺少 CAP_NET_RAW 权限。")
             elif "no such device" in str(e).lower() or e.errno == 19:
-                err = OSError(f"[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 绑定虚拟网卡 tun0 失败，找不到设备！这通常是因为 OpenVPN 核心未能成功连接或已被异常终止。")
+                err = OSError(f"[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 绑定虚拟网卡 {TUN_INTERFACE} 失败，找不到设备！这通常是因为 OpenVPN 核心未能成功连接或已被异常终止。")
             if sock is not None:
                 sock.close()
     if err is not None:
