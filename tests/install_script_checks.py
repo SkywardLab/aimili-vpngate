@@ -30,6 +30,17 @@ class InstallScriptContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertTrue(marker in TEXT, marker)
 
+    def test_web_ui_defaults_to_localhost(self):
+        expected_markers = [
+            '{"host": "127.0.0.1", "port": 8787',
+            '"host": "127.0.0.1",',
+            'echo -e "  * 网页控制面板:  ${BLUE}http://127.0.0.1:${UI_PORT}/${SECRET_PATH}/${PLAIN}"',
+            "SSH 隧道",
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
 
 if __name__ == "__main__":
     unittest.main()

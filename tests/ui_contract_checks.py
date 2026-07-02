@@ -109,6 +109,15 @@ class UiContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertTrue(marker in TEXT, marker)
 
+    def test_web_ui_runtime_defaults_to_localhost(self):
+        expected_markers = [
+            'UI_HOST = os.environ.get("UI_HOST", "127.0.0.1")',
+            '"host": UI_HOST,',
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
 
 
 if __name__ == "__main__":

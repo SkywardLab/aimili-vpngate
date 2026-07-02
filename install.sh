@@ -216,7 +216,7 @@ def generate_random_suffix():
 def load_ui_cfg():
     import json
     path = "/opt/aimilivpn/vpngate_data/ui_auth.json"
-    cfg = {"host": "::", "port": 8787, "secret_path": "EJsW2EeBo9lY", "password": ""}
+    cfg = {"host": "127.0.0.1", "port": 8787, "secret_path": "EJsW2EeBo9lY", "password": ""}
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -1065,7 +1065,7 @@ import sys
 
 auth_file, ui_port, secret_path, username, password = sys.argv[1:6]
 cfg = {
-    "host": "::",
+    "host": "127.0.0.1",
     "port": int(ui_port),
     "proxy_port": 7928,
     "secret_path": secret_path,
@@ -1176,10 +1176,8 @@ PUBLIC_IPV6=$(curl -6 -s --max-time 3 https://api.ipify.org || curl -6 -s --max-
 echo -e "\n${GREEN}==========================================================${PLAIN}"
 echo -e "${GREEN}             AimiliVPN 源码一键部署已完成！${PLAIN}"
 echo -e "${GREEN}==========================================================${PLAIN}"
-echo -e "  * 网页控制面板:  ${BLUE}http://${PUBLIC_IP}:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
-if [ -n "$PUBLIC_IPV6" ]; then
-    echo -e "  * 网页控制面板(IPv6):  ${BLUE}http://[${PUBLIC_IPV6}]:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
-fi
+echo -e "  * 网页控制面板:  ${BLUE}http://127.0.0.1:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
+echo -e "  * 远程访问提示:  ${YELLOW}ssh -L ${UI_PORT}:127.0.0.1:${UI_PORT} root@${PUBLIC_IP}${PLAIN}  建立 SSH 隧道后在本机浏览器打开上述地址。"
 echo -e "  * 网页管理账号:  ${YELLOW}${USERNAME}${PLAIN}"
 echo -e "  * 网页管理密码:  ${YELLOW}${PASSWORD}${PLAIN}"
 echo -e "  * HTTP/SOCKS5 代理端口:  ${BLUE}http://127.0.0.1:${PROXY_PORT}/${PLAIN}  或  ${BLUE}http://[::1]:${PROXY_PORT}/${PLAIN}"
