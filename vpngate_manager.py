@@ -1157,8 +1157,8 @@ def sort_all_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     available_nodes = sorted(
         [n for n in nodes if n.get("probe_status") == "available" or n.get("active")],
         key=lambda n: (
-            0 if n.get("ip_type") in ("residential", "mobile") else 1,
             parse_int(n.get("latency_ms")) or 999999,
+            0 if n.get("ip_type") in ("residential", "mobile") else 1,
             -parse_int(n.get("score"))
         )
     )
