@@ -56,6 +56,39 @@ class NodeSortingTest(unittest.TestCase):
             ],
         )
 
+    def test_tun_not_ready_proxy_failure_defers_auto_switch_during_start_grace(self):
+        now = 1_000.0
+        connected_at = now - (vpngate_manager.PROXY_HEALTH_STARTUP_GRACE_SECONDS - 1)
+        self.assertTrue(
+            vpngate_manager.should_defer_proxy_failure(
+                "[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 等待虚拟网卡 tun0 就绪超时",
+                active_node_connected_at=connected_at,
+                now=now,
+            )
+        )
+
+    def test_tun_not_ready_proxy_failure_switches_after_start_grace(self):
+        now = 1_000.0
+        connected_at = now - (vpngate_manager.PROXY_HEALTH_STARTUP_GRACE_SECONDS + 1)
+        self.assertFalse(
+            vpngate_manager.should_defer_proxy_failure(
+                "[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 等待虚拟网卡 tun0 就绪超时",
+                active_node_connected_at=connected_at,
+                now=now,
+            )
+        )
+
+    def test_regular_proxy_failure_switches_without_start_grace(self):
+        now = 1_000.0
+        connected_at = now - 1
+        self.assertFalse(
+            vpngate_manager.should_defer_proxy_failure(
+                "出口连接测试失败",
+                active_node_connected_at=connected_at,
+                now=now,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

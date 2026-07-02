@@ -120,6 +120,7 @@ LOCAL_PROXY_PORT = env_int("LOCAL_PROXY_PORT", 7928, 1, 65535)
 UI_HOST = os.environ.get("UI_HOST", "::")
 UI_PORT = env_int("UI_PORT", 8787, 1, 65535)
 INVALID_BACKOFF_SECONDS = env_int("INVALID_BACKOFF_SECONDS", 30 * 60, 1)
+PROXY_HEALTH_STARTUP_GRACE_SECONDS = env_int("PROXY_HEALTH_STARTUP_GRACE_SECONDS", 45, 1)
 
 ROOT_DIR = Path(sys.executable).resolve().parent if globals().get("__compiled__") else Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ["VPNGATE_DATA_DIR"]).resolve() if os.environ.get("VPNGATE_DATA_DIR") else ROOT_DIR / "vpngate_data"
@@ -143,6 +144,7 @@ last_collector_heartbeat = 0.0
 last_checker_heartbeat = 0.0
 last_pinger_heartbeat = 0.0
 server_start_time = time.time()
+active_node_connected_at = server_start_time
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(exist_ok=True, parents=True)
@@ -388,10 +390,11 @@ def safe_name(value: str) -> str:
     return value.strip("._") or "node"
 
 def clear_active_connection_state(message: str) -> None:
-    global active_openvpn_process, active_openvpn_node_id
+    global active_openvpn_process, active_openvpn_node_id, active_node_connected_at
     stop_process(active_openvpn_process)
     active_openvpn_process = None
     active_openvpn_node_id = ""
+    active_node_connected_at = time.time()
     with lock:
         nodes = read_nodes()
         for item in nodes:
@@ -1127,7 +1130,7 @@ def cleanup_policy_routing() -> None:
         pass
 
 def stop_active_openvpn() -> None:
-    global active_openvpn_process, active_openvpn_node_id
+    global active_openvpn_process, active_openvpn_node_id, active_node_connected_at
     with lock:
         cleanup_policy_routing()
         config_to_delete = None
@@ -1140,6 +1143,7 @@ def stop_active_openvpn() -> None:
         stop_process(active_openvpn_process)
         active_openvpn_process = None
         active_openvpn_node_id = ""
+        active_node_connected_at = time.time()
         kill_existing_openvpn_processes()
         
         if config_to_delete:
@@ -1171,6 +1175,20 @@ def sort_all_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda n: (-parse_int(n.get("score")), -float(n.get("probed_at", 0)))
     )
     return available_nodes + untested_nodes + unavailable_nodes
+
+def is_tun_not_ready_error(message: str) -> bool:
+    text = str(message or "")
+    return "ERR_ROUTE_DEV_NOT_FOUND" in text or "tun0" in text or "虚拟网卡" in text
+
+def should_defer_proxy_failure(
+    message: str,
+    active_node_connected_at: float,
+    now: float | None = None,
+) -> bool:
+    if not is_tun_not_ready_error(message):
+        return False
+    current_time = time.time() if now is None else now
+    return current_time - active_node_connected_at < PROXY_HEALTH_STARTUP_GRACE_SECONDS
 
 def apply_routing_filters(
     nodes: list[dict[str, Any]],
@@ -1585,7 +1603,7 @@ def auto_switch_node(attempt: int = 0) -> None:
         threading.Thread(target=bg_fetch_and_switch, daemon=True).start()
 
 def connect_node(node_id: str) -> str:
-    global active_openvpn_process, active_openvpn_node_id, is_connecting
+    global active_openvpn_process, active_openvpn_node_id, is_connecting, active_node_connected_at
     node_id = str(node_id or "").strip()
     if not node_id:
         raise ValueError("Node id is required")
@@ -1650,6 +1668,7 @@ def connect_node(node_id: str) -> str:
         with lock:
             active_openvpn_process = process
             active_openvpn_node_id = node_id
+            active_node_connected_at = time.time()
         
         set_state(active_node_latency="配置路由", last_check_message="正在配置策略路由规则与流量转发...")
         setup_policy_routing("tun0")
@@ -4868,6 +4887,18 @@ def background_proxy_checker() -> None:
                 log_to_json("INFO", "Proxy", f"代理可用，IP: {res['ip']}, 延迟: {res['latency_ms']} ms")
             else:
                 error_msg = res.get("error", "未知错误")
+                if active_openvpn_node_id and should_defer_proxy_failure(error_msg, active_node_connected_at):
+                    waiting_msg = "VPN 网卡正在就绪，代理检测将在下一轮重试"
+                    set_state(
+                        proxy_ok=False,
+                        proxy_ip="-",
+                        proxy_latency_ms=0,
+                        proxy_error=waiting_msg
+                    )
+                    log_to_json("INFO", "Proxy", f"{waiting_msg}: {error_msg}")
+                    time.sleep(5)
+                    continue
+
                 if active_openvpn_node_id:
                     print(f"[警告] {LOCAL_PROXY_PORT} 端口本地代理当前不可用！原因: {error_msg}", flush=True)
                     log_to_json("WARNING", "Proxy", f"代理不可用: {error_msg}")
