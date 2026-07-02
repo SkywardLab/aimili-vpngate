@@ -49,6 +49,28 @@ class UiContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertTrue(marker not in TEXT, marker)
 
+    def test_web_ui_github_links_point_to_current_repository(self):
+        expected_links = [
+            "https://github.com/SkywardLab/aimili-vpngate",
+            "https://github.com/SkywardLab/aimili-vpngate/tree/bate",
+        ]
+        for link in expected_links:
+            with self.subTest(link=link):
+                self.assertTrue(link in TEXT, link)
+        self.assertTrue("github.com/baoweise-bot/aimili-vpngate" not in TEXT)
+
+
+    def test_node_table_displays_latency_column(self):
+        expected_markers = [
+            '<th style="width: 100px;">延迟</th>',
+            '<td><span class="latency-cell">${latencyText}</span></td>',
+            'colspan="7"',
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
+
 
 if __name__ == "__main__":
     unittest.main()
