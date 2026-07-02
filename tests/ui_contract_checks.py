@@ -83,6 +83,18 @@ class UiContractTest(unittest.TestCase):
     def test_api_nodes_response_uses_sorted_nodes(self):
         self.assertTrue("nodes = sort_all_nodes(nodes)" in TEXT)
 
+    def test_frontend_node_sort_uses_status_and_latency(self):
+        expected_markers = [
+            "function nodeDisplayRank(n) {",
+            'if (n.active || n.probe_status === "available") return 0;',
+            "function nodeLatencyValue(n) {",
+            "const latencyDelta = nodeLatencyValue(a) - nodeLatencyValue(b);",
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+        self.assertTrue("const aScore = a.score || 0;" not in TEXT)
+
 
 
 if __name__ == "__main__":

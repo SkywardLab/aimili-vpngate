@@ -3588,14 +3588,38 @@ function getFilteredNodes() {
   });
 }
 
+function nodeDisplayRank(n) {
+  if (!n) return 3;
+  if (n.active || n.probe_status === "available") return 0;
+  if (n.probe_status === "not_checked" || n.probe_status === "testing") return 1;
+  if (n.probe_status === "unavailable") return 2;
+  return 1;
+}
+
+function nodeLatencyValue(n) {
+  const latency = Number(n && n.latency_ms ? n.latency_ms : 0);
+  return latency > 0 ? latency : 999999;
+}
+
+function nodeIpTypeRank(n) {
+  return n && ["residential", "mobile"].includes(n.ip_type) ? 0 : 1;
+}
+
 function stableSortNodes() {
   nodes.sort((a, b) => {
     if (!a || !b) return 0;
-    const aScore = a.score || 0;
-    const bScore = b.score || 0;
-    if (bScore !== aScore) {
-      return bScore - aScore;
+    const rankDelta = nodeDisplayRank(a) - nodeDisplayRank(b);
+    if (rankDelta !== 0) return rankDelta;
+
+    if (nodeDisplayRank(a) === 0) {
+      const latencyDelta = nodeLatencyValue(a) - nodeLatencyValue(b);
+      if (latencyDelta !== 0) return latencyDelta;
+      const ipTypeDelta = nodeIpTypeRank(a) - nodeIpTypeRank(b);
+      if (ipTypeDelta !== 0) return ipTypeDelta;
     }
+
+    const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+    if (scoreDelta !== 0) return scoreDelta;
     const aId = a.id || "";
     const bId = b.id || "";
     return aId.localeCompare(bId);
