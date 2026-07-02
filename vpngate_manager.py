@@ -3524,6 +3524,16 @@ function getLatencyClass(ms) {
   return 'latency-poor';
 }
 
+function formatNodeLatency(n) {
+  if (!n || n.probe_status === "unavailable") return "-";
+  const latency = Number(n.latency_ms || 0);
+  if (latency > 0 && (n.probe_status === "available" || n.active)) {
+    const latencyClass = getLatencyClass(latency);
+    return `<span class="latency-val ${latencyClass}">${latency} ms</span>`;
+  }
+  return "-";
+}
+
 function updateCountryFilter() {
   const select = $("country_filter");
   const selectedValue = select.value;
@@ -3754,8 +3764,7 @@ function render(){
       
       const badgeClass = isCurrentlyActive ? 'available' : (n.probe_status || 'not_checked');
       const badgeText = isCurrentlyActive ? '<span class="badge-pulse"></span>已连接' : translateStatus(n.probe_status);
-      const latencyClass = getLatencyClass(n.latency_ms);
-      const latencyText = n.latency_ms ? `<span class="latency-val ${latencyClass}">${n.latency_ms} ms</span>` : "-";
+      const latencyText = formatNodeLatency(n);
       const displayLocation = n.location || translateCountry(n.country) || "-";
       
       const isTesting = testingNodeIds.has(n.id) || n.probe_status === "testing";
@@ -5021,6 +5030,7 @@ class Handler(BaseHTTPRequestHandler):
                         ).start()
                     if last_active_latency > 0:
                         active_node["latency_ms"] = last_active_latency
+            nodes = sort_all_nodes(nodes)
             stripped_nodes = []
             for n in nodes:
                 stripped = n.copy()

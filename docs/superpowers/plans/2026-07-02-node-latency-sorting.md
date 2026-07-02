@@ -18,7 +18,7 @@
   - Inline JavaScript gains `formatNodeLatency(n)` and table rendering uses it.
 - Modify: `tests/ui_contract_checks.py`
   - Add string-contract checks for the frontend latency helper and API sorting call.
-- Create: `tests/test_node_sorting.py`
+- Create: `tests/node_sorting_checks.py`
   - Add a functional unit test for latency-first sorting and unavailable-last ordering.
 
 ---
@@ -26,12 +26,12 @@
 ### Task 1: Backend node sorting
 
 **Files:**
-- Create: `tests/test_node_sorting.py`
+- Create: `tests/node_sorting_checks.py`
 - Modify: `vpngate_manager.py:1156-1174`
 
 - [ ] **Step 1: Write the failing functional test**
 
-Create `tests/test_node_sorting.py`:
+Create `tests/node_sorting_checks.py`:
 
 ```python
 import unittest
@@ -102,7 +102,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-python3 -m unittest tests.test_node_sorting.NodeSortingTest.test_available_nodes_sort_by_latency_and_unavailable_nodes_are_last
+python3 -m unittest tests.node_sorting_checks.NodeSortingTest.test_available_nodes_sort_by_latency_and_unavailable_nodes_are_last
 ```
 
 Expected: `FAIL`, with `residential-slow` appearing before `hosting-fast` under the current sort key.
@@ -137,7 +137,7 @@ def sort_all_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 Run:
 
 ```bash
-python3 -m unittest tests.test_node_sorting.NodeSortingTest.test_available_nodes_sort_by_latency_and_unavailable_nodes_are_last
+python3 -m unittest tests.node_sorting_checks.NodeSortingTest.test_available_nodes_sort_by_latency_and_unavailable_nodes_are_last
 ```
 
 Expected: `OK`.
@@ -147,7 +147,7 @@ Expected: `OK`.
 Run:
 
 ```bash
-git add vpngate_manager.py tests/test_node_sorting.py
+git add vpngate_manager.py tests/node_sorting_checks.py
 git commit -m "Sort nodes by measured latency"
 ```
 
@@ -250,7 +250,7 @@ Expected: `OK`.
 Run:
 
 ```bash
-python3 -m unittest tests.ui_contract_checks tests.test_node_sorting
+python3 -m unittest tests.ui_contract_checks tests.node_sorting_checks
 ```
 
 Expected: `OK`.
@@ -271,7 +271,7 @@ git commit -m "Show unavailable node latency as dash"
 **Files:**
 - Read: `vpngate_manager.py`
 - Read: `tests/ui_contract_checks.py`
-- Read: `tests/test_node_sorting.py`
+- Read: `tests/node_sorting_checks.py`
 
 - [ ] **Step 1: Run all repository tests**
 

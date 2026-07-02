@@ -70,6 +70,19 @@ class UiContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertTrue(marker in TEXT, marker)
 
+    def test_unavailable_node_latency_displays_dash(self):
+        expected_markers = [
+            "function formatNodeLatency(n) {",
+            'if (!n || n.probe_status === "unavailable") return "-";',
+            'const latencyText = formatNodeLatency(n);',
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
+    def test_api_nodes_response_uses_sorted_nodes(self):
+        self.assertTrue("nodes = sort_all_nodes(nodes)" in TEXT)
+
 
 
 if __name__ == "__main__":
