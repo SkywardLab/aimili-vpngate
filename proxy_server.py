@@ -8,7 +8,7 @@ import socket
 import threading
 import urllib.parse
 import time
-from typing import Any
+from typing import Any, Callable, Optional
 
 def parse_positive_int(value: str | None, default: int) -> int:
     try:
@@ -27,6 +27,20 @@ TUN_INTERFACE = os.environ.get("LOCAL_PROXY_TUN_INTERFACE", "tun0")
 TUN_READY_TIMEOUT_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN_READY_TIMEOUT"), 15.0)
 TUN_READY_POLL_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN_READY_POLL"), 0.25)
 proxy_connection_sem = threading.BoundedSemaphore(MAX_PROXY_CONNECTIONS)
+
+EgressUpstream = tuple[str, str, int, Optional[str], Optional[str]]
+egress_upstream_provider: Callable[[], EgressUpstream | None] | None = None
+
+
+def set_egress_upstream_provider(provider: Callable[[], EgressUpstream | None] | None) -> None:
+    global egress_upstream_provider
+    egress_upstream_provider = provider
+
+
+def current_egress_upstream() -> EgressUpstream | None:
+    if egress_upstream_provider is None:
+        return None
+    return egress_upstream_provider()
 
 def tun_interface_exists(interface: str = TUN_INTERFACE) -> bool:
     return os.path.exists(f"/sys/class/net/{interface}")
@@ -77,6 +91,131 @@ def parse_host_port(authority: str, default_port: int) -> tuple[str, int]:
         host, _, port_text = authority.rpartition(":")
         return host, parse_int(port_text) or default_port
     return authority, default_port
+
+def connect_tcp(host: str, port: int, timeout: float) -> socket.socket:
+    err = None
+    for res in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+        af, socktype, proto, canonname, sa = res
+        sock = None
+        try:
+            sock = socket.socket(af, socktype, proto)
+            sock.settimeout(timeout)
+            sock.connect(sa)
+            return sock
+        except OSError as exc:
+            err = exc
+            if sock is not None:
+                sock.close()
+    if err is not None:
+        raise err
+    raise OSError("getaddrinfo returns empty list")
+
+def socks5_address_bytes(host: str) -> bytes:
+    try:
+        return b"\x01" + socket.inet_aton(host)
+    except OSError:
+        pass
+    try:
+        return b"\x04" + socket.inet_pton(socket.AF_INET6, host)
+    except OSError:
+        pass
+    encoded = host.encode("idna")
+    if len(encoded) > 255:
+        raise OSError("SOCKS5 target host is too long")
+    return b"\x03" + bytes([len(encoded)]) + encoded
+
+def open_socks5_upstream(
+    upstream: EgressUpstream,
+    address: tuple[str, int],
+    timeout: float,
+) -> socket.socket:
+    _, proxy_host, proxy_port, username, password = upstream
+    target_host, target_port = address
+    sock = connect_tcp(proxy_host, proxy_port, timeout)
+    try:
+        if username is None:
+            sock.sendall(b"\x05\x01\x00")
+        else:
+            sock.sendall(b"\x05\x01\x02")
+        greeting = recv_exact(sock, 2)
+        if greeting[0] != 5 or greeting[1] == 0xFF:
+            raise OSError("WARP SOCKS5 proxy rejected authentication methods")
+        if greeting[1] == 2:
+            user_bytes = (username or "").encode("utf-8")
+            pass_bytes = (password or "").encode("utf-8")
+            if len(user_bytes) > 255 or len(pass_bytes) > 255:
+                raise OSError("WARP SOCKS5 credentials are too long")
+            sock.sendall(b"\x01" + bytes([len(user_bytes)]) + user_bytes + bytes([len(pass_bytes)]) + pass_bytes)
+            auth_reply = recv_exact(sock, 2)
+            if auth_reply != b"\x01\x00":
+                raise OSError("WARP SOCKS5 authentication failed")
+        request = b"\x05\x01\x00" + socks5_address_bytes(target_host) + int(target_port).to_bytes(2, "big")
+        sock.sendall(request)
+        reply = recv_exact(sock, 4)
+        if reply[0] != 5 or reply[1] != 0:
+            raise OSError(f"WARP SOCKS5 connect failed with code {reply[1] if len(reply) > 1 else 'unknown'}")
+        address_type = reply[3]
+        if address_type == 1:
+            recv_exact(sock, 4)
+        elif address_type == 3:
+            recv_exact(sock, recv_exact(sock, 1)[0])
+        elif address_type == 4:
+            recv_exact(sock, 16)
+        else:
+            raise OSError("WARP SOCKS5 returned invalid address type")
+        recv_exact(sock, 2)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+def open_http_upstream(
+    upstream: EgressUpstream,
+    address: tuple[str, int],
+    timeout: float,
+) -> socket.socket:
+    _, proxy_host, proxy_port, username, password = upstream
+    target_host, target_port = address
+    sock = connect_tcp(proxy_host, proxy_port, timeout)
+    try:
+        authority = f"[{target_host}]:{target_port}" if ":" in target_host else f"{target_host}:{target_port}"
+        auth_header = ""
+        if username is not None:
+            token = base64.b64encode(f"{username}:{password or ''}".encode("utf-8")).decode("ascii")
+            auth_header = f"Proxy-Authorization: Basic {token}\r\n"
+        request = (
+            f"CONNECT {authority} HTTP/1.1\r\n"
+            f"Host: {authority}\r\n"
+            f"{auth_header}"
+            "Proxy-Connection: Keep-Alive\r\n\r\n"
+        )
+        sock.sendall(request.encode("iso-8859-1"))
+        response = b""
+        while b"\r\n\r\n" not in response and len(response) < 65536:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        status_line = response.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        parts = status_line.split(" ", 2)
+        if len(parts) < 2 or parts[1] != "200":
+            raise OSError(f"WARP HTTP proxy CONNECT failed: {status_line}")
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+def open_connection_via_upstream(
+    upstream: EgressUpstream,
+    address: tuple[str, int],
+    timeout: float,
+) -> socket.socket:
+    proxy_type = upstream[0]
+    if proxy_type == "socks":
+        return open_socks5_upstream(upstream, address, timeout)
+    if proxy_type == "http":
+        return open_http_upstream(upstream, address, timeout)
+    raise OSError(f"Unsupported WARP proxy type: {proxy_type}")
 
 def get_proxy_credentials() -> tuple[str | None, str | None]:
     user = os.environ.get("LOCAL_PROXY_USER") or os.environ.get("LOCAL_PROXY_USERNAME")
@@ -222,6 +361,9 @@ def resolve_dns_over_tun0(host: str, dns_server: str = "8.8.8.8", timeout: float
 
 def create_connection(address: tuple[str, int], timeout: float = 20) -> socket.socket:
     host, port = address
+    upstream = current_egress_upstream()
+    if upstream is not None:
+        return open_connection_via_upstream(upstream, (host, port), timeout)
     if not wait_for_tun_interface():
         raise OSError(f"[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] 等待虚拟网卡 {TUN_INTERFACE} 就绪超时，请确认 OpenVPN 核心已成功连接。")
     resolved_ip = resolve_dns_over_tun0(host)

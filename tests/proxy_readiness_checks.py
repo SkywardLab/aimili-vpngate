@@ -58,6 +58,35 @@ class ProxyTunReadinessTest(unittest.TestCase):
 
         resolve_dns.assert_not_called()
 
+    def tearDown(self):
+        proxy_server.set_egress_upstream_provider(None)
+
+    def test_create_connection_uses_egress_upstream_before_tun(self):
+        sentinel = object()
+        proxy_server.set_egress_upstream_provider(lambda: ("socks", "127.0.0.1", 40000, None, None))
+
+        with mock.patch.object(proxy_server, "open_connection_via_upstream", return_value=sentinel) as open_upstream, \
+            mock.patch.object(proxy_server, "wait_for_tun_interface") as wait_for_tun:
+            result = proxy_server.create_connection(("example.com", 443), timeout=0.1)
+
+        self.assertIs(result, sentinel)
+        open_upstream.assert_called_once_with(
+            ("socks", "127.0.0.1", 40000, None, None),
+            ("example.com", 443),
+            0.1,
+        )
+        wait_for_tun.assert_not_called()
+
+    def test_create_connection_uses_tun_when_egress_upstream_is_empty(self):
+        proxy_server.set_egress_upstream_provider(lambda: None)
+
+        with mock.patch.object(proxy_server, "wait_for_tun_interface", return_value=False), \
+            mock.patch.object(proxy_server, "open_connection_via_upstream") as open_upstream:
+            with self.assertRaisesRegex(OSError, "等待虚拟网卡 tun0 就绪超时"):
+                proxy_server.create_connection(("example.com", 443), timeout=0.1)
+
+        open_upstream.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
