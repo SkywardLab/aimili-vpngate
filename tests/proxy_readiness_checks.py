@@ -1,3 +1,4 @@
+import types
 import unittest
 from unittest import mock
 
@@ -86,6 +87,101 @@ class ProxyTunReadinessTest(unittest.TestCase):
                 proxy_server.create_connection(("example.com", 443), timeout=0.1)
 
         open_upstream.assert_not_called()
+
+
+class FakeSocket:
+    def __init__(self, recv_chunks):
+        self.recv_chunks = list(recv_chunks)
+        self.sent = []
+        self.closed = False
+
+    def sendall(self, data):
+        self.sent.append(data)
+
+    def recv(self, size):
+        if not self.recv_chunks:
+            return b""
+        chunk = self.recv_chunks.pop(0)
+        data, rest = chunk[:size], chunk[size:]
+        if rest:
+            self.recv_chunks.insert(0, rest)
+        return data
+
+    def close(self):
+        self.closed = True
+
+
+class ProxyUpstreamHelperTest(unittest.TestCase):
+    def test_egress_upstream_alias_uses_python38_compatible_typing_tuple(self):
+        generic_alias = getattr(types, "GenericAlias", ())
+        self.assertNotIsInstance(proxy_server.EgressUpstream, generic_alias)
+
+    def test_open_socks5_upstream_negotiates_no_auth_and_connects(self):
+        fake_sock = FakeSocket([
+            b"\x05\x00",
+            b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00",
+        ])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock) as connect_tcp:
+            result = proxy_server.open_socks5_upstream(
+                ("socks", "127.0.0.1", 40000, None, None),
+                ("example.com", 443),
+                0.5,
+            )
+
+        self.assertIs(result, fake_sock)
+        self.assertFalse(fake_sock.closed)
+        connect_tcp.assert_called_once_with("127.0.0.1", 40000, 0.5)
+        self.assertEqual(fake_sock.sent[0], b"\x05\x01\x00")
+        self.assertEqual(
+            fake_sock.sent[1],
+            b"\x05\x01\x00\x03\x0bexample.com\x01\xbb",
+        )
+
+    def test_open_http_upstream_connect_success_returns_socket(self):
+        fake_sock = FakeSocket([b"HTTP/1.1 200 Connection Established\r\n\r\n"])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            result = proxy_server.open_http_upstream(
+                ("http", "127.0.0.1", 40000, None, None),
+                ("example.com", 443),
+                0.5,
+            )
+
+        self.assertIs(result, fake_sock)
+        self.assertFalse(fake_sock.closed)
+        self.assertEqual(
+            fake_sock.sent[0],
+            b"CONNECT example.com:443 HTTP/1.1\r\n"
+            b"Host: example.com:443\r\n"
+            b"Proxy-Connection: Keep-Alive\r\n\r\n",
+        )
+
+    def test_open_http_upstream_connect_failure_closes_socket(self):
+        fake_sock = FakeSocket([b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            with self.assertRaisesRegex(OSError, "WARP HTTP proxy CONNECT failed"):
+                proxy_server.open_http_upstream(
+                    ("http", "127.0.0.1", 40000, None, None),
+                    ("example.com", 443),
+                    0.5,
+                )
+
+        self.assertTrue(fake_sock.closed)
+
+    def test_open_socks5_upstream_rejected_auth_closes_socket(self):
+        fake_sock = FakeSocket([b"\x05\xff"])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            with self.assertRaisesRegex(OSError, "rejected authentication"):
+                proxy_server.open_socks5_upstream(
+                    ("socks", "127.0.0.1", 40000, None, None),
+                    ("example.com", 443),
+                    0.5,
+                )
+
+        self.assertTrue(fake_sock.closed)
 
 
 if __name__ == "__main__":

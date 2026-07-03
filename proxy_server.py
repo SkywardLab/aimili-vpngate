@@ -8,7 +8,7 @@ import socket
 import threading
 import urllib.parse
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 def parse_positive_int(value: str | None, default: int) -> int:
     try:
@@ -28,7 +28,7 @@ TUN_READY_TIMEOUT_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN
 TUN_READY_POLL_SECONDS = parse_positive_float(os.environ.get("LOCAL_PROXY_TUN_READY_POLL"), 0.25)
 proxy_connection_sem = threading.BoundedSemaphore(MAX_PROXY_CONNECTIONS)
 
-EgressUpstream = tuple[str, str, int, Optional[str], Optional[str]]
+EgressUpstream = Tuple[str, str, int, Optional[str], Optional[str]]
 egress_upstream_provider: Callable[[], EgressUpstream | None] | None = None
 
 
