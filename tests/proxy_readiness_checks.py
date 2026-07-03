@@ -170,6 +170,16 @@ class ProxyUpstreamHelperTest(unittest.TestCase):
         self.assertEqual(result.recv(7), b"PAYLOAD")
         self.assertFalse(fake_sock.closed)
 
+    def test_relay_sends_pending_buffered_bytes_before_select(self):
+        client = FakeSocket([])
+        upstream = proxy_server.BufferedSocket(FakeSocket([]), b"PAYLOAD")
+
+        with mock.patch.object(proxy_server.select, "select", return_value=([], [], [])) as select_mock:
+            proxy_server.relay(client, upstream)
+
+        self.assertEqual(client.sent, [b"PAYLOAD"])
+        select_mock.assert_called_once()
+
     def test_open_http_upstream_connect_failure_closes_socket(self):
         fake_sock = FakeSocket([b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"])
 

@@ -136,6 +136,9 @@ class BufferedSocket:
             return data
         return self.sock.recv(size)
 
+    def has_pending_buffer(self) -> bool:
+        return bool(self.buffered)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self.sock, name)
 
@@ -414,7 +417,10 @@ def create_connection(address: tuple[str, int], timeout: float = 20) -> socket.s
 def relay(left: socket.socket, right: socket.socket) -> None:
     sockets = [left, right]
     while True:
-        readable, _, errored = select.select(sockets, [], sockets, 120)
+        readable = [sock for sock in sockets if getattr(sock, "has_pending_buffer", lambda: False)()]
+        errored = []
+        if not readable:
+            readable, _, errored = select.select(sockets, [], sockets, 120)
         if errored or not readable:
             return
         for source in readable:
