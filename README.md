@@ -73,6 +73,7 @@ ml update
   ```
 * **⚙️ 本地其他服务配置**：
   将本机的其他代理工具、爬虫框架或服务的出站代理设置为 `127.0.0.1:7928`。
+* **☁️ 可选 WARP 出站**：如果您已在 VPS 本机启动 Cloudflare WARP 本地代理（例如 `socks5://127.0.0.1:40000`），可在“管理员 -> 代理及网络设置”中将出站核心切换为 **Cloudflare WARP**，本地 `7928` 代理端口会转发到该 WARP 出口。
 
 > 💡 **小贴士**：如果您确实需要对公网其他设备开放此代理端口，可以通过设置环境变量 `export LOCAL_PROXY_HOST="::"` 重新启动服务以允许公网接入。
 
@@ -181,6 +182,7 @@ To prevent unauthorized scanning and abuse of the proxy port on the public inter
   ```
 * **⚙️ Other local services**:
   Configure your scrapers, frameworks, or utility tools on this VPS to send traffic via `127.0.0.1:7928`.
+* **☁️ Optional WARP egress**: If a Cloudflare WARP local proxy is already running on the VPS, such as `socks5://127.0.0.1:40000`, open **Admin -> Proxy Settings** and switch the egress core to **Cloudflare WARP**. The local `7928` proxy port will forward traffic through that WARP exit.
 
 > 💡 **Quick Note**: If you really need to open this proxy port to the public internet, you can set the environment variable `export LOCAL_PROXY_HOST="::"` before running the manager.
 
