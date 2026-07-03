@@ -117,8 +117,8 @@ def parse_warp_proxy_url(value: str) -> tuple[str, str, int, str | None, str | N
     raw = str(value or "").strip()
     parsed = urllib.parse.urlsplit(raw)
     scheme = parsed.scheme.lower()
-    if scheme not in ("socks5", "socks", "http", "https"):
-        raise ValueError("WARP 代理地址必须使用 socks5://、socks://、http:// 或 https://")
+    if scheme not in ("socks5", "socks", "http"):
+        raise ValueError("WARP 代理地址必须使用 socks5://、socks:// 或 http://")
     if not parsed.hostname:
         raise ValueError("WARP 代理地址必须包含主机")
     try:

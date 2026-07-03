@@ -22,6 +22,10 @@ class WarpProxyUrlTest(unittest.TestCase):
             ("socks", "localhost", 1080, None, None),
         )
 
+    def test_rejects_https_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "WARP 代理地址必须使用"):
+            vpn_utils.parse_warp_proxy_url("https://127.0.0.1:8443")
+
     def test_rejects_missing_scheme(self):
         with self.assertRaisesRegex(ValueError, "WARP 代理地址必须使用"):
             vpn_utils.parse_warp_proxy_url("127.0.0.1:40000")

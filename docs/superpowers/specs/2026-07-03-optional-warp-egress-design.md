@@ -28,7 +28,6 @@ Accepted endpoint schemes:
 - `socks5://host:port`
 - `socks://host:port`
 - `http://host:port`
-- `https://host:port`
 
 When WARP mode is saved, the manager stops the active OpenVPN connection, clears VPNGate active node state, and reports WARP as the active egress core. Proxy health checks use the WARP endpoint so the displayed exit IP reflects WARP.
 
