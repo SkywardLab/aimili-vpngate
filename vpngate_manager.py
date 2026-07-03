@@ -1684,6 +1684,9 @@ def connect_node(node_id: str) -> str:
     if not node_id:
         raise ValueError("Node id is required")
     stopped_existing = False
+    loaded_ui_cfg: dict[str, Any] | None = None
+    wrote_connect_ui_cfg = False
+    auth_file = DATA_DIR / "ui_auth.json"
     with lock:
         if is_connecting:
             print("[连接] 正在建立其他连接中，跳过此请求", flush=True)
@@ -1705,10 +1708,10 @@ def connect_node(node_id: str) -> str:
         ui_cfg["connection_enabled"] = True
         if ui_cfg.get("routing_mode") == "fixed_ip":
             ui_cfg["fixed_node_id"] = node_id
-        auth_file = DATA_DIR / "ui_auth.json"
         with lock:
             DATA_DIR.mkdir(exist_ok=True, parents=True)
             write_json(auth_file, ui_cfg)
+            wrote_connect_ui_cfg = True
         apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
         
         set_state(active_node_latency="清理连接", last_check_message="正在关闭与清理旧的 VPN 连接及网卡...")
@@ -1795,6 +1798,15 @@ def connect_node(node_id: str) -> str:
         log_to_json("INFO", "VPN", f"节点 {node_id} 连接成功，出口网卡 tun0 已启用")
         return f"Connected {node_id}"
     except Exception as exc:
+        if (
+            wrote_connect_ui_cfg
+            and loaded_ui_cfg is not None
+            and loaded_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp"
+        ):
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, loaded_ui_cfg)
+            apply_egress_mode_transition(ui_cfg, loaded_ui_cfg)
         if stopped_existing or (active_openvpn_node_id == node_id and not active_openvpn_running()):
             clear_active_connection_state(f"连接失败: {exc}")
         else:
@@ -1807,6 +1819,12 @@ def connect_node(node_id: str) -> str:
 def maintain_valid_nodes(force: bool = False) -> str:
     global active_openvpn_process, active_openvpn_node_id, is_connecting
     ensure_dirs()
+    if not force and load_ui_config().get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        msg = "当前处于 WARP 出站模式，暂停 VPNGate 节点自动维护。"
+        print(f"[维护线程] {msg}", flush=True)
+        log_to_json("INFO", "Main", msg)
+        set_state(last_check_message=msg)
+        return msg
     if not maintenance_lock.acquire(blocking=False):
         msg = "节点维护任务正在运行，请稍后再试"
         set_state(last_check_message=msg)

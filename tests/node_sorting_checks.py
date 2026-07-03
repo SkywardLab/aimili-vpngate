@@ -177,6 +177,59 @@ class NodeSortingTest(unittest.TestCase):
         self.assertIn('暂停 VPNGate 自动切换', source)
         self.assertIn('if egress_mode == "vpngate" and sys.platform.startswith("linux") and not tun_path.exists():', source)
 
+    def test_failed_vpngate_connect_from_warp_restores_warp_config(self):
+        import tempfile
+
+        previous_cfg = {
+            "egress_mode": "warp",
+            "warp_proxy_url": "socks5://127.0.0.1:40000",
+            "routing_mode": "auto",
+        }
+        ui_auth_writes = []
+
+        def capture_write(path, data):
+            if Path(path).name == "ui_auth.json":
+                ui_auth_writes.append(dict(data))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            node = {
+                "id": "node-a",
+                "config_file": str(tmp_path / "node-a.ovpn"),
+                "config_text": "client",
+            }
+            with mock.patch.object(vpngate_manager, "DATA_DIR", tmp_path), \
+                mock.patch.object(vpngate_manager, "CONFIG_DIR", tmp_path / "configs"), \
+                mock.patch.object(vpngate_manager, "load_ui_config", return_value=previous_cfg), \
+                mock.patch.object(vpngate_manager, "read_nodes", return_value=[node]), \
+                mock.patch.object(vpngate_manager, "validate_node_allowed_by_routing"), \
+                mock.patch.object(vpngate_manager, "write_json", side_effect=capture_write), \
+                mock.patch.object(vpngate_manager, "apply_egress_mode_transition"), \
+                mock.patch.object(vpngate_manager, "set_state"), \
+                mock.patch.object(vpngate_manager, "log_to_json"), \
+                mock.patch.object(vpngate_manager, "stop_active_openvpn"), \
+                mock.patch.object(vpngate_manager, "run_openvpn_until_ready", return_value=(False, "openvpn failed", None)), \
+                mock.patch.object(vpngate_manager, "clear_active_connection_state"):
+                with self.assertRaisesRegex(RuntimeError, "openvpn failed"):
+                    vpngate_manager.connect_node("node-a")
+
+        self.assertGreaterEqual(len(ui_auth_writes), 2)
+        self.assertEqual(ui_auth_writes[0]["egress_mode"], "vpngate")
+        self.assertEqual(ui_auth_writes[-1]["egress_mode"], "warp")
+        self.assertEqual(ui_auth_writes[-1]["warp_proxy_url"], "socks5://127.0.0.1:40000")
+
+    def test_automatic_maintenance_skips_vpngate_testing_in_warp_mode(self):
+        with mock.patch.object(vpngate_manager, "ensure_dirs"), \
+            mock.patch.object(vpngate_manager, "load_ui_config", return_value={"egress_mode": "warp"}), \
+            mock.patch.object(vpngate_manager, "set_state"), \
+            mock.patch.object(vpngate_manager, "fetch_candidates") as fetch_candidates, \
+            mock.patch.object(vpngate_manager, "test_multiple_nodes") as test_multiple_nodes:
+            result = vpngate_manager.maintain_valid_nodes(force=False)
+
+        self.assertIn("WARP", result)
+        fetch_candidates.assert_not_called()
+        test_multiple_nodes.assert_not_called()
+
 
 
 if __name__ == "__main__":
