@@ -4433,6 +4433,8 @@ function handleEgressModeChange(mode) {
     warningDiv.style.background = "rgba(245, 158, 11, 0.1)";
     warningDiv.style.border = "1px solid rgba(245, 158, 11, 0.2)";
     warningDiv.innerHTML = `⚠️ <strong>WARP 出站</strong>：当前本地代理将通过配置的 WARP 本地代理端口出站，VPNGate 节点自动切换会暂停。`;
+  } else if (mode === "vpngate") {
+    handleRoutingModeChange($("net_routing_mode").value || "auto");
   }
 }
 

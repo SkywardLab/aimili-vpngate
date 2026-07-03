@@ -128,6 +128,7 @@ class UiContractTest(unittest.TestCase):
             'egress_mode: egressMode',
             'warp_proxy_url: warpProxyUrl',
             'state.egress_label',
+            'handleRoutingModeChange($("net_routing_mode").value || "auto")',
         ]
         for marker in expected_markers:
             with self.subTest(marker=marker):
