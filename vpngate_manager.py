@@ -1332,6 +1332,37 @@ def enforce_active_node_allowed_by_routing(ui_cfg: dict[str, Any], reason: str =
             threading.Thread(target=auto_switch_node, daemon=True).start()
         return msg
 
+def apply_egress_mode_transition(previous_cfg: dict[str, Any], current_cfg: dict[str, Any]) -> str | None:
+    previous_mode = previous_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    current_mode = current_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    if previous_mode == current_mode:
+        return None
+    if current_mode == "warp":
+        stop_active_openvpn()
+        with lock:
+            nodes = read_nodes()
+            for item in nodes:
+                item["active"] = False
+            write_json(NODES_FILE, nodes)
+        message = "已切换至 WARP 出站核心，VPNGate 活动连接已停止"
+        set_state(
+            active_openvpn_node_id="",
+            active_node_latency="WARP",
+            proxy_ok=False,
+            proxy_ip="-",
+            proxy_latency_ms=0,
+            proxy_error="正在检测 WARP 出口连通性",
+            last_check_message=message,
+        )
+        log_to_json("INFO", "Routing", message)
+        return message
+    if current_mode == "vpngate":
+        message = "已切换至 VPNGate 出站核心，可手动连接节点或等待自动维护"
+        set_state(last_check_message=message)
+        log_to_json("INFO", "Routing", message)
+        return message
+    return None
+
 def reconnect_fixed_node_if_needed(ui_cfg: dict[str, Any]) -> bool:
     global is_connecting
     if ui_cfg.get("routing_mode") != "fixed_ip" or active_openvpn_running():

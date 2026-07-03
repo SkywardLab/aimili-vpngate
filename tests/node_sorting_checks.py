@@ -125,6 +125,23 @@ class NodeSortingTest(unittest.TestCase):
         ):
             self.assertIsNone(vpngate_manager.get_egress_upstream_config())
 
+    def test_switching_to_warp_stops_openvpn_and_clears_active_nodes(self):
+        previous = {"egress_mode": "vpngate"}
+        current = {"egress_mode": "warp", "warp_proxy_url": "socks5://127.0.0.1:40000"}
+        nodes = [{"id": "node-a", "active": True}, {"id": "node-b", "active": False}]
+
+        with mock.patch.object(vpngate_manager, "stop_active_openvpn") as stop_active, \
+            mock.patch.object(vpngate_manager, "read_nodes", return_value=nodes), \
+            mock.patch.object(vpngate_manager, "write_json") as write_json, \
+            mock.patch.object(vpngate_manager, "set_state") as set_state:
+            message = vpngate_manager.apply_egress_mode_transition(previous, current)
+
+        stop_active.assert_called_once()
+        written_nodes = write_json.call_args.args[1]
+        self.assertEqual([node["active"] for node in written_nodes], [False, False])
+        set_state.assert_called_once()
+        self.assertIn("WARP", message)
+
 
 if __name__ == "__main__":
     unittest.main()
