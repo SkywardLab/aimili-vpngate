@@ -124,6 +124,21 @@ def socks5_address_bytes(host: str) -> bytes:
         raise OSError("SOCKS5 target host is too long")
     return b"\x03" + bytes([len(encoded)]) + encoded
 
+class BufferedSocket:
+    def __init__(self, sock: socket.socket, buffered: bytes):
+        self.sock = sock
+        self.buffered = buffered
+
+    def recv(self, size: int) -> bytes:
+        if self.buffered:
+            data = self.buffered[:size]
+            self.buffered = self.buffered[size:]
+            return data
+        return self.sock.recv(size)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.sock, name)
+
 def open_socks5_upstream(
     upstream: EgressUpstream,
     address: tuple[str, int],
@@ -196,10 +211,13 @@ def open_http_upstream(
             if not chunk:
                 break
             response += chunk
-        status_line = response.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        headers, _, buffered = response.partition(b"\r\n\r\n")
+        status_line = headers.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
         parts = status_line.split(" ", 2)
         if len(parts) < 2 or parts[1] != "200":
             raise OSError(f"WARP HTTP proxy CONNECT failed: {status_line}")
+        if buffered:
+            return BufferedSocket(sock, buffered)
         return sock
     except Exception:
         sock.close()

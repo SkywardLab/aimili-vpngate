@@ -157,6 +157,19 @@ class ProxyUpstreamHelperTest(unittest.TestCase):
             b"Proxy-Connection: Keep-Alive\r\n\r\n",
         )
 
+    def test_open_http_upstream_preserves_trailing_response_bytes(self):
+        fake_sock = FakeSocket([b"HTTP/1.1 200 Connection Established\r\n\r\nPAYLOAD"])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            result = proxy_server.open_http_upstream(
+                ("http", "127.0.0.1", 40000, None, None),
+                ("example.com", 443),
+                0.5,
+            )
+
+        self.assertEqual(result.recv(7), b"PAYLOAD")
+        self.assertFalse(fake_sock.closed)
+
     def test_open_http_upstream_connect_failure_closes_socket(self):
         fake_sock = FakeSocket([b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"])
 
