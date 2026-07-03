@@ -113,6 +113,25 @@ def parse_proxy_endpoint(value: str, default_port: int) -> tuple[str | None, int
         return host or None, _safe_int(port_text, default_port)
     return value, default_port
 
+def parse_warp_proxy_url(value: str) -> tuple[str, str, int, str | None, str | None]:
+    raw = str(value or "").strip()
+    parsed = urllib.parse.urlsplit(raw)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("socks5", "socks", "http", "https"):
+        raise ValueError("WARP 代理地址必须使用 socks5://、socks://、http:// 或 https://")
+    if not parsed.hostname:
+        raise ValueError("WARP 代理地址必须包含主机")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("WARP 代理端口范围必须是 1 至 65535") from exc
+    if port is None or port < 1 or port > 65535:
+        raise ValueError("WARP 代理端口范围必须是 1 至 65535")
+    proxy_type = "socks" if scheme in ("socks5", "socks") else "http"
+    username = urllib.parse.unquote(parsed.username) if parsed.username is not None else None
+    password = urllib.parse.unquote(parsed.password) if parsed.password is not None else None
+    return proxy_type, parsed.hostname, port, username, password
+
 def _proxy_config_from_env(env_name: str, forced_type: str | None = None) -> tuple[str, str, int, str | None, str | None] | None:
     val = os.environ.get(env_name)
     if not val:
