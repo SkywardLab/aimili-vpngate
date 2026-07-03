@@ -3341,6 +3341,25 @@ INDEX_HTML = r"""<!doctype html>
         <div style="border-top: 1px dashed #fafafc; padding-top: 16px; margin-bottom: 16px;">
           <div class="form-group" style="margin-bottom: 16px;">
             <label class="form-label">IP 出站路由模式</label>
+            <input type="hidden" id="net_egress_mode" value="vpngate">
+            <div class="form-group">
+              <label>出站核心</label>
+              <div class="option-group" id="egress_mode_group">
+                <div class="option-card active" data-value="vpngate" onclick="setEgressMode('vpngate')">
+                  <div class="option-title">VPNGate 节点</div>
+                  <div class="option-desc">使用当前 OpenVPN 节点、地区锁定、收藏和自动切换能力。</div>
+                </div>
+                <div class="option-card" data-value="warp" onclick="setEgressMode('warp')">
+                  <div class="option-title">Cloudflare WARP</div>
+                  <div class="option-desc">通过本机 WARP HTTP/SOCKS 代理作为出口。</div>
+                </div>
+              </div>
+            </div>
+            <div class="form-group" id="net_warp_proxy_group" style="display:none;">
+              <label for="net_warp_proxy_url">WARP 代理地址</label>
+              <input type="text" id="net_warp_proxy_url" placeholder="socks5://127.0.0.1:40000">
+              <div class="hint">请先在本机启动 WARP 本地代理，例如 wireproxy 或 warp-cli 对应的代理端口。</div>
+            </div>
             <input type="hidden" id="net_routing_mode" value="auto">
             <div class="option-group" id="routing_mode_group">
               <div class="option-card active" data-value="auto" onclick="setRoutingMode('auto')">
@@ -4348,7 +4367,21 @@ async function toggleFavRouting() {
 }
 
 function selectOptionCard(groupName, value) {
-  if (groupName === 'routing_mode') {
+  if (groupName === 'egress_mode') {
+    const input = $("net_egress_mode");
+    if (input) input.value = value;
+
+    const cards = document.querySelectorAll("#egress_mode_group .option-card");
+    cards.forEach(card => {
+      if (card.getAttribute("data-value") === value) {
+        card.classList.add("active");
+      } else {
+        card.classList.remove("active");
+      }
+    });
+
+    handleEgressModeChange(value);
+  } else if (groupName === 'routing_mode') {
     const input = $("net_routing_mode");
     if (input) input.value = value;
     
@@ -4383,6 +4416,24 @@ function setRoutingMode(value) {
 
 function setRoutingIpType(value) {
   selectOptionCard('routing_ip_type', value);
+}
+
+function setEgressMode(value) {
+  selectOptionCard('egress_mode', value);
+}
+
+function handleEgressModeChange(mode) {
+  const warpGroup = $("net_warp_proxy_group");
+  const warningDiv = $("net_routing_warning");
+  if (warpGroup) {
+    warpGroup.style.display = mode === "warp" ? "block" : "none";
+  }
+  if (mode === "warp" && warningDiv) {
+    warningDiv.style.color = "var(--warning)";
+    warningDiv.style.background = "rgba(245, 158, 11, 0.1)";
+    warningDiv.style.border = "1px solid rgba(245, 158, 11, 0.2)";
+    warningDiv.innerHTML = `⚠️ <strong>WARP 出站</strong>：当前本地代理将通过配置的 WARP 本地代理端口出站，VPNGate 节点自动切换会暂停。`;
+  }
 }
 
 function handleRoutingModeChange(mode) {
@@ -4557,6 +4608,9 @@ function openNetworkModal() {
   
   if (state) {
     $("net_proxy_port").value = state.proxy_port || 7928;
+    const egressMode = state.egress_mode || "vpngate";
+    $("net_warp_proxy_url").value = state.warp_proxy_url || "socks5://127.0.0.1:40000";
+    selectOptionCard('egress_mode', egressMode);
     const mode = state.routing_mode || "auto";
     const ipType = state.routing_ip_type || "all";
     
@@ -4586,6 +4640,8 @@ async function saveNetwork(e) {
   const routingMode = $("net_routing_mode").value;
   const forceCountry = $("net_force_country").value;
   const routingIpType = $("net_routing_ip_type").value;
+  const egressMode = $("net_egress_mode").value;
+  const warpProxyUrl = $("net_warp_proxy_url").value.trim() || "socks5://127.0.0.1:40000";
   
   if (isNaN(proxyPort) || proxyPort < 1024 || proxyPort > 65535) {
     errorDivEl.textContent = "代理出站端口范围必须在 1024 至 65535 之间";
@@ -4621,7 +4677,9 @@ async function saveNetwork(e) {
         proxy_port: proxyPort,
         routing_mode: routingMode,
         force_country: forceCountry,
-        routing_ip_type: routingIpType
+        routing_ip_type: routingIpType,
+        egress_mode: egressMode,
+        warp_proxy_url: warpProxyUrl
       })
     });
     
@@ -4724,7 +4782,12 @@ function renderGatewayServices(services) {
   const container = $("gateway_services_list");
   if (!container) return;
   
-  let html = "";
+  const egressLabel = state ? (state.egress_label || (state.egress_mode === "warp" ? "WARP" : "VPNGate")) : "VPNGate";
+  let html = `
+    <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 16px; font-size: 12px; color: var(--text-secondary);">
+      出站核心: ${esc(egressLabel)}
+    </div>
+  `;
   services.forEach(s => {
     const statusText = s.status === "running" ? "正在运行" : "已停止";
     const badgeClass = s.status === "running" ? "available" : "unavailable";

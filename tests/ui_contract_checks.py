@@ -118,6 +118,21 @@ class UiContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertTrue(marker in TEXT, marker)
 
+    def test_warp_egress_controls_exist(self):
+        expected_markers = [
+            'id="net_egress_mode"',
+            'id="net_warp_proxy_url"',
+            'Cloudflare WARP',
+            'function setEgressMode(value)',
+            'function handleEgressModeChange(mode)',
+            'egress_mode: egressMode',
+            'warp_proxy_url: warpProxyUrl',
+            'state.egress_label',
+        ]
+        for marker in expected_markers:
+            with self.subTest(marker=marker):
+                self.assertTrue(marker in TEXT, marker)
+
 
 
 if __name__ == "__main__":
