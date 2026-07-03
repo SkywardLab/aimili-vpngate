@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import vpngate_manager
@@ -141,6 +142,28 @@ class NodeSortingTest(unittest.TestCase):
         self.assertEqual([node["active"] for node in written_nodes], [False, False])
         set_state.assert_called_once()
         self.assertIn("WARP", message)
+
+    def test_validate_egress_settings_accepts_warp(self):
+        self.assertEqual(
+            vpngate_manager.validate_egress_settings("warp", "http://127.0.0.1:8080"),
+            ("warp", "http://127.0.0.1:8080"),
+        )
+
+    def test_validate_egress_settings_rejects_unknown_mode(self):
+        with self.assertRaisesRegex(ValueError, "无效的出站核心"):
+            vpngate_manager.validate_egress_settings("other", "socks5://127.0.0.1:40000")
+
+    def test_validate_egress_settings_rejects_bad_warp_url(self):
+        with self.assertRaisesRegex(ValueError, "WARP 代理地址必须使用"):
+            vpngate_manager.validate_egress_settings("warp", "127.0.0.1:40000")
+
+    def test_update_settings_wires_egress_transition_and_provider_startup(self):
+        source = Path(vpngate_manager.__file__).read_text(encoding="utf-8")
+        self.assertIn('egress_mode_raw = str(payload.get("egress_mode") or DEFAULT_EGRESS_MODE).strip()', source)
+        self.assertIn('warp_proxy_url_raw = str(payload.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL).strip()', source)
+        self.assertIn('previous_ui_cfg = dict(ui_cfg)', source)
+        self.assertIn('egress_message = apply_egress_mode_transition(previous_ui_cfg, ui_cfg)', source)
+        self.assertIn('proxy_server.set_egress_upstream_provider(get_egress_upstream_config)', source)
 
 
 if __name__ == "__main__":

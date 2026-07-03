@@ -410,6 +410,14 @@ def get_egress_upstream_config() -> tuple[str, str, int, str | None, str | None]
         return None
     return vpn_utils.parse_warp_proxy_url(str(ui_cfg.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL))
 
+def validate_egress_settings(egress_mode: str, warp_proxy_url: str) -> tuple[str, str]:
+    mode = str(egress_mode or DEFAULT_EGRESS_MODE).strip().lower()
+    if mode not in VALID_EGRESS_MODES:
+        raise ValueError("无效的出站核心")
+    warp_url = str(warp_proxy_url or DEFAULT_WARP_PROXY_URL).strip()
+    vpn_utils.parse_warp_proxy_url(warp_url)
+    return mode, warp_url
+
 def safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return value.strip("._") or "node"
@@ -5477,6 +5485,13 @@ class Handler(BaseHTTPRequestHandler):
                 routing_mode = str(payload.get("routing_mode") or "auto").strip()
                 force_country = str(payload.get("force_country") or "").strip()
                 routing_ip_type = str(payload.get("routing_ip_type") or "all").strip()
+                egress_mode_raw = str(payload.get("egress_mode") or DEFAULT_EGRESS_MODE).strip()
+                warp_proxy_url_raw = str(payload.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL).strip()
+                try:
+                    egress_mode, warp_proxy_url = validate_egress_settings(egress_mode_raw, warp_proxy_url_raw)
+                except ValueError as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
                 
                 try:
                     new_proxy_port_int = int(new_proxy_port)
@@ -5497,6 +5512,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 
                 ui_cfg = load_ui_config()
+                previous_ui_cfg = dict(ui_cfg)
                 expected_proxy_port = ui_cfg.get("proxy_port", 7928)
                 fixed_node_id = current_fixed_node_id(ui_cfg) if routing_mode == "fixed_ip" else ""
                 
@@ -5511,6 +5527,8 @@ class Handler(BaseHTTPRequestHandler):
                 ui_cfg["routing_mode"] = routing_mode
                 ui_cfg["force_country"] = force_country
                 ui_cfg["routing_ip_type"] = routing_ip_type
+                ui_cfg["egress_mode"] = egress_mode
+                ui_cfg["warp_proxy_url"] = warp_proxy_url
                 if routing_mode == "favorites":
                     ui_cfg["fav_fail_fallback"] = False
                 if routing_mode == "fixed_ip":
@@ -5521,7 +5539,10 @@ class Handler(BaseHTTPRequestHandler):
                     DATA_DIR.mkdir(exist_ok=True, parents=True)
                     write_json(auth_file, ui_cfg)
 
-                policy_message = enforce_active_node_allowed_by_routing(ui_cfg, "路由设置已更新")
+                egress_message = apply_egress_mode_transition(previous_ui_cfg, ui_cfg)
+                policy_message = None
+                if egress_mode == "vpngate":
+                    policy_message = enforce_active_node_allowed_by_routing(ui_cfg, "路由设置已更新")
                 
                 restart_needed = (new_proxy_port_int != expected_proxy_port)
                 if restart_needed:
@@ -5534,7 +5555,7 @@ class Handler(BaseHTTPRequestHandler):
                     
                     threading.Thread(target=restart_server, daemon=True).start()
                 else:
-                    message = policy_message or "配置更新成功，已即时生效！"
+                    message = egress_message or policy_message or "配置更新成功，已即时生效！"
                     self.send_json({"ok": True, "restart_needed": False, "message": message})
             except Exception as exc:
                 self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -5772,6 +5793,9 @@ def main() -> None:
     sys.stdout = tee
     sys.stderr = tee
 
+    proxy_server.set_egress_upstream_provider(get_egress_upstream_config)
+    startup_ui_cfg = load_ui_config()
+
     write_json(
         STATE_FILE,
         {
@@ -5786,6 +5810,8 @@ def main() -> None:
             "is_connecting": True,
             "active_node_latency": "正在准备",
             "blacklisted_nodes": 0,
+            "egress_mode": startup_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE),
+            "egress_label": "WARP" if startup_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp" else "VPNGate",
         },
     )
     threading.Thread(target=proxy_server.start_proxy_server, args=(LOCAL_PROXY_HOST, LOCAL_PROXY_PORT), daemon=True).start()
