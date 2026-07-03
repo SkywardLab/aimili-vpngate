@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 import vpngate_manager
 
@@ -88,6 +89,41 @@ class NodeSortingTest(unittest.TestCase):
                 now=now,
             )
         )
+
+
+    def test_load_ui_config_defaults_to_vpngate_egress(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(vpngate_manager, "DATA_DIR", Path(tmp)):
+                cfg = vpngate_manager.load_ui_config()
+
+        self.assertEqual(cfg["egress_mode"], "vpngate")
+        self.assertEqual(cfg["warp_proxy_url"], "socks5://127.0.0.1:40000")
+
+    def test_warp_egress_provider_returns_parsed_proxy_config(self):
+        with mock.patch.object(
+            vpngate_manager,
+            "load_ui_config",
+            return_value={
+                "egress_mode": "warp",
+                "warp_proxy_url": "socks5://127.0.0.1:40000",
+            },
+        ):
+            self.assertEqual(
+                vpngate_manager.get_egress_upstream_config(),
+                ("socks", "127.0.0.1", 40000, None, None),
+            )
+
+    def test_vpngate_egress_provider_returns_none(self):
+        with mock.patch.object(
+            vpngate_manager,
+            "load_ui_config",
+            return_value={"egress_mode": "vpngate", "warp_proxy_url": "socks5://127.0.0.1:40000"},
+        ):
+            self.assertIsNone(vpngate_manager.get_egress_upstream_config())
 
 
 if __name__ == "__main__":

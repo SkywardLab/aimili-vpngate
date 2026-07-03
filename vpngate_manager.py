@@ -121,6 +121,9 @@ UI_HOST = os.environ.get("UI_HOST", "127.0.0.1")
 UI_PORT = env_int("UI_PORT", 8787, 1, 65535)
 INVALID_BACKOFF_SECONDS = env_int("INVALID_BACKOFF_SECONDS", 30 * 60, 1)
 PROXY_HEALTH_STARTUP_GRACE_SECONDS = env_int("PROXY_HEALTH_STARTUP_GRACE_SECONDS", 45, 1)
+DEFAULT_EGRESS_MODE = "vpngate"
+DEFAULT_WARP_PROXY_URL = "socks5://127.0.0.1:40000"
+VALID_EGRESS_MODES = {"vpngate", "warp"}
 
 ROOT_DIR = Path(sys.executable).resolve().parent if globals().get("__compiled__") else Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ["VPNGATE_DATA_DIR"]).resolve() if os.environ.get("VPNGATE_DATA_DIR") else ROOT_DIR / "vpngate_data"
@@ -229,7 +232,9 @@ def load_ui_config() -> dict[str, Any]:
             "connection_enabled": True,
             "fixed_node_id": "",
             "favorite_node_ids": [],
-            "fav_fail_fallback": False
+            "fav_fail_fallback": False,
+            "egress_mode": DEFAULT_EGRESS_MODE,
+            "warp_proxy_url": DEFAULT_WARP_PROXY_URL,
         }
         updated = False
         if auth_file.exists():
@@ -237,7 +242,7 @@ def load_ui_config() -> dict[str, Any]:
                 data = json.loads(auth_file.read_text(encoding="utf-8"))
                 for key, val in data.items():
                     config[key] = val
-                for key in ["host", "port", "proxy_port", "routing_mode", "force_country", "routing_ip_type", "connection_enabled", "fixed_node_id", "favorite_node_ids", "fav_fail_fallback"]:
+                for key in ["host", "port", "proxy_port", "routing_mode", "force_country", "routing_ip_type", "connection_enabled", "fixed_node_id", "favorite_node_ids", "fav_fail_fallback", "egress_mode", "warp_proxy_url"]:
                     if key not in data:
                         updated = True
             except Exception:
@@ -264,6 +269,16 @@ def load_ui_config() -> dict[str, Any]:
             normalized_proxy_port = fallback_proxy_port
         if normalized_proxy_port != config.get("proxy_port"):
             config["proxy_port"] = normalized_proxy_port
+            updated = True
+
+        if config.get("egress_mode") not in VALID_EGRESS_MODES:
+            config["egress_mode"] = DEFAULT_EGRESS_MODE
+            updated = True
+
+        try:
+            vpn_utils.parse_warp_proxy_url(str(config.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL))
+        except ValueError:
+            config["warp_proxy_url"] = DEFAULT_WARP_PROXY_URL
             updated = True
             
         if not auth_file.exists() or updated:
@@ -382,8 +397,18 @@ def get_state() -> dict[str, Any]:
     state["fixed_node_id"] = ui_cfg.get("fixed_node_id", "")
     state["favorite_node_ids"] = ui_cfg.get("favorite_node_ids", [])
     state["fav_fail_fallback"] = False
+    state["egress_mode"] = ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    state["warp_proxy_url"] = ui_cfg.get("warp_proxy_url", DEFAULT_WARP_PROXY_URL)
+    state["egress_label"] = "WARP" if state["egress_mode"] == "warp" else "VPNGate"
     
     return state
+
+
+def get_egress_upstream_config() -> tuple[str, str, int, str | None, str | None] | None:
+    ui_cfg = load_ui_config()
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) != "warp":
+        return None
+    return vpn_utils.parse_warp_proxy_url(str(ui_cfg.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL))
 
 def safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
