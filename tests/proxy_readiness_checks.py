@@ -180,6 +180,32 @@ class ProxyUpstreamHelperTest(unittest.TestCase):
         self.assertEqual(client.sent, [b"PAYLOAD"])
         select_mock.assert_called_once()
 
+    def test_open_http_upstream_incomplete_200_response_closes_socket(self):
+        fake_sock = FakeSocket([b"HTTP/1.1 200 Connection Established\r\nHeader: unfinished"])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            with self.assertRaisesRegex(OSError, "incomplete HTTP proxy CONNECT response"):
+                proxy_server.open_http_upstream(
+                    ("http", "127.0.0.1", 40000, None, None),
+                    ("example.com", 443),
+                    0.5,
+                )
+
+        self.assertTrue(fake_sock.closed)
+
+    def test_open_http_upstream_oversized_header_without_terminator_closes_socket(self):
+        fake_sock = FakeSocket([b"HTTP/1.1 200 Connection Established\r\n" + b"A" * 65536])
+
+        with mock.patch.object(proxy_server, "connect_tcp", return_value=fake_sock):
+            with self.assertRaisesRegex(OSError, "HTTP proxy CONNECT response headers too large"):
+                proxy_server.open_http_upstream(
+                    ("http", "127.0.0.1", 40000, None, None),
+                    ("example.com", 443),
+                    0.5,
+                )
+
+        self.assertTrue(fake_sock.closed)
+
     def test_open_http_upstream_connect_failure_closes_socket(self):
         fake_sock = FakeSocket([b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"])
 

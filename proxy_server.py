@@ -214,6 +214,10 @@ def open_http_upstream(
             if not chunk:
                 break
             response += chunk
+        if b"\r\n\r\n" not in response:
+            if len(response) >= 65536:
+                raise OSError("WARP HTTP proxy CONNECT response headers too large")
+            raise OSError("WARP HTTP proxy CONNECT response has incomplete HTTP proxy CONNECT response headers")
         headers, _, buffered = response.partition(b"\r\n\r\n")
         status_line = headers.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
         parts = status_line.split(" ", 2)
