@@ -4439,6 +4439,11 @@ function handleEgressModeChange(mode) {
 }
 
 function handleRoutingModeChange(mode) {
+  const egressInput = $("net_egress_mode");
+  if (egressInput && egressInput.value === "warp") {
+    handleEgressModeChange("warp");
+    return;
+  }
   const countryGroup = $("net_force_country_group");
   const warningDiv = $("net_routing_warning");
   
