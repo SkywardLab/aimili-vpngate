@@ -1704,15 +1704,17 @@ def connect_node(node_id: str) -> str:
         
         loaded_ui_cfg = load_ui_config()
         ui_cfg = prepare_vpngate_connect_config(loaded_ui_cfg)
+        defer_vpngate_switch = loaded_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp"
         validate_node_allowed_by_routing(node, ui_cfg)
         ui_cfg["connection_enabled"] = True
         if ui_cfg.get("routing_mode") == "fixed_ip":
             ui_cfg["fixed_node_id"] = node_id
-        with lock:
-            DATA_DIR.mkdir(exist_ok=True, parents=True)
-            write_json(auth_file, ui_cfg)
-            wrote_connect_ui_cfg = True
-        apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
+        if not defer_vpngate_switch:
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, ui_cfg)
+                wrote_connect_ui_cfg = True
+            apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
         
         set_state(active_node_latency="清理连接", last_check_message="正在关闭与清理旧的 VPN 连接及网卡...")
         stop_active_openvpn()
@@ -1745,6 +1747,13 @@ def connect_node(node_id: str) -> str:
             with lock:
                 active_openvpn_node_id = ""
             raise RuntimeError(message)
+
+        if defer_vpngate_switch:
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, ui_cfg)
+                wrote_connect_ui_cfg = True
+            apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
             
         with lock:
             active_openvpn_process = process
