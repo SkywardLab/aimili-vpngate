@@ -165,6 +165,19 @@ class NodeSortingTest(unittest.TestCase):
         self.assertIn('egress_message = apply_egress_mode_transition(previous_ui_cfg, ui_cfg)', source)
         self.assertIn('proxy_server.set_egress_upstream_provider(get_egress_upstream_config)', source)
 
+    def test_prepare_vpngate_connect_switches_warp_mode_to_vpngate(self):
+        cfg = {"egress_mode": "warp", "warp_proxy_url": "socks5://127.0.0.1:40000"}
+        updated = vpngate_manager.prepare_vpngate_connect_config(cfg)
+        self.assertEqual(updated["egress_mode"], "vpngate")
+        self.assertEqual(updated["warp_proxy_url"], "socks5://127.0.0.1:40000")
+
+    def test_warp_mode_suppresses_vpngate_background_paths(self):
+        source = Path(vpngate_manager.__file__).read_text(encoding="utf-8")
+        self.assertIn('if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":', source)
+        self.assertIn('暂停 VPNGate 自动切换', source)
+        self.assertIn('if egress_mode == "vpngate" and sys.platform.startswith("linux") and not tun_path.exists():', source)
+
+
 
 if __name__ == "__main__":
     unittest.main()

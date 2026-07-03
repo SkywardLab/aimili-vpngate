@@ -418,6 +418,12 @@ def validate_egress_settings(egress_mode: str, warp_proxy_url: str) -> tuple[str
     vpn_utils.parse_warp_proxy_url(warp_url)
     return mode, warp_url
 
+def prepare_vpngate_connect_config(ui_cfg: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(ui_cfg)
+    updated["egress_mode"] = "vpngate"
+    updated.setdefault("warp_proxy_url", DEFAULT_WARP_PROXY_URL)
+    return updated
+
 def safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return value.strip("._") or "node"
@@ -1373,6 +1379,8 @@ def apply_egress_mode_transition(previous_cfg: dict[str, Any], current_cfg: dict
 
 def reconnect_fixed_node_if_needed(ui_cfg: dict[str, Any]) -> bool:
     global is_connecting
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        return False
     if ui_cfg.get("routing_mode") != "fixed_ip" or active_openvpn_running():
         return False
     target_id = current_fixed_node_id(ui_cfg)
@@ -1605,6 +1613,10 @@ def auto_switch_node(attempt: int = 0) -> None:
         return
         
     ui_cfg = load_ui_config()
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        print("[自动切换] 当前处于 WARP 出站模式，暂停 VPNGate 自动切换。", flush=True)
+        return
+
     connection_enabled = ui_cfg.get("connection_enabled", True)
     if not connection_enabled:
         print("[自动切换] 连接已禁用，不进行自动切换。", flush=True)
@@ -1687,7 +1699,8 @@ def connect_node(node_id: str) -> str:
         if not node:
             raise ValueError(f"Node not found: {node_id}")
         
-        ui_cfg = load_ui_config()
+        loaded_ui_cfg = load_ui_config()
+        ui_cfg = prepare_vpngate_connect_config(loaded_ui_cfg)
         validate_node_allowed_by_routing(node, ui_cfg)
         ui_cfg["connection_enabled"] = True
         if ui_cfg.get("routing_mode") == "fixed_ip":
@@ -1696,6 +1709,7 @@ def connect_node(node_id: str) -> str:
         with lock:
             DATA_DIR.mkdir(exist_ok=True, parents=True)
             write_json(auth_file, ui_cfg)
+        apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
         
         set_state(active_node_latency="清理连接", last_check_message="正在关闭与清理旧的 VPN 连接及网卡...")
         stop_active_openvpn()
@@ -4973,8 +4987,10 @@ def check_proxy_health() -> dict[str, Any]:
                 pass
 
     # 2. 检测虚拟网卡 tun0 是否存在 (Linux 下)
+    ui_cfg = load_ui_config()
+    egress_mode = ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
     tun_path = Path("/sys/class/net/tun0")
-    if sys.platform.startswith("linux") and not tun_path.exists():
+    if egress_mode == "vpngate" and sys.platform.startswith("linux") and not tun_path.exists():
         return {
             "ok": False,
             "error": "[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] VPN 虚拟网卡 (tun0) 未启用，请确保当前已成功连接 VPN 节点"
