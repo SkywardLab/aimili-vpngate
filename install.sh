@@ -15,40 +15,48 @@ fi
 
 # 2. Check OS distribution and set package manager
 OS_TYPE=""
+OS_ID_LIKE=""
 PKG_MGR=""
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS_TYPE=$ID
+    OS_ID_LIKE="${ID_LIKE:-}"
 fi
 
-case "$OS_TYPE" in
-    ubuntu|debian)
-        PKG_MGR="apt-get"
-        export DEBIAN_FRONTEND=noninteractive
-        ;;
-    alpine)
-        PKG_MGR="apk"
-        ;;
-    centos|rhel|rocky|almalinux|fedora|ol|amzn)
-        if command -v dnf >/dev/null 2>&1; then
-            PKG_MGR="dnf"
-        else
-            PKG_MGR="yum"
-        fi
-        ;;
-    *)
-        echo -e "${RED}错误: 不支持的操作系统 ($OS_TYPE)！目前仅支持 Ubuntu/Debian/Alpine/CentOS/RHEL/Rocky/AlmaLinux/Fedora/OracleLinux/AmazonLinux。${PLAIN}"
-        exit 1
-        ;;
-esac
+for os_family in $OS_TYPE $OS_ID_LIKE; do
+    case "$os_family" in
+        ubuntu|debian)
+            PKG_MGR="apt-get"
+            export DEBIAN_FRONTEND=noninteractive
+            break
+            ;;
+        alpine)
+            PKG_MGR="apk"
+            break
+            ;;
+        centos|rhel|rocky|almalinux|fedora|ol|amzn)
+            if command -v dnf >/dev/null 2>&1; then
+                PKG_MGR="dnf"
+            else
+                PKG_MGR="yum"
+            fi
+            break
+            ;;
+    esac
+done
+
+if [ -z "$PKG_MGR" ]; then
+    echo -e "${RED}错误: 不支持的操作系统 ($OS_TYPE)！目前支持 Ubuntu/Debian/Alpine/CentOS/RHEL/Rocky/AlmaLinux/Fedora/OracleLinux/AmazonLinux 及其兼容衍生发行版。${PLAIN}"
+    exit 1
+fi
 
 echo -e "${BLUE}==========================================================${PLAIN}"
 echo -e "${BLUE}        欢迎使用 AimiliVPN 一键源码部署与管理脚本${PLAIN}"
 echo -e "${BLUE}==========================================================${PLAIN}"
 
 # 3. Configure GitHub Repository URL
-# Default to the official repository (baoweise-bot/aimili-vpngate)
-DEFAULT_USER="baoweise-bot"
+# Default to the official repository (SkywardLab/aimili-vpngate)
+DEFAULT_USER="SkywardLab"
 DEFAULT_REPO="aimili-vpngate"
 
 # Allow custom repository override via command line arguments
@@ -82,8 +90,162 @@ fi
 
 # 4. Clone or pull the repository
 INSTALL_DIR="/opt/aimilivpn"
+WARP_SOCKS_HOST="127.0.0.1"
+WARP_SOCKS_PORT="40000"
+WIREPROXY_BIN="/usr/local/bin/wireproxy"
+WGCF_BIN="/usr/local/bin/wgcf"
+WIREPROXY_DIR="/etc/wireproxy"
+WIREPROXY_CONF="/etc/wireproxy/warp.conf"
+AIMILIVPN_WARP_SERVICE="aimilivpn-warp.service"
+WGCF_REPO="ViRb3/wgcf"
+WIREPROXY_REPO="octeep/wireproxy"
 # 默认部署分支（在 bate 分支设为 bate；在 main 分支设为 main）
 DEFAULT_DEPLOY_BRANCH="main"
+
+detect_release_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        armv7l|armv6l)
+            echo "arm"
+            ;;
+        i386|i686)
+            echo "386"
+            ;;
+        s390x)
+            echo "s390x"
+            ;;
+        *)
+            uname -m
+            ;;
+    esac
+}
+
+install_github_release_binary() {
+    local repo="$1"
+    local binary_name="$2"
+    local asset_pattern="$3"
+    local target_path="$4"
+    local tmp_dir asset_url download_path extracted_path
+
+    if [ -x "$target_path" ]; then
+        echo -e "  -> ${binary_name} 已安装: ${target_path}"
+        return 0
+    fi
+
+    echo -e "  -> 正在下载 ${binary_name} (${repo})..."
+    asset_url=$(python3 - "$repo" "$asset_pattern" <<'PY'
+import json
+import re
+import sys
+import urllib.request
+
+repo, asset_pattern = sys.argv[1], sys.argv[2]
+pattern = re.compile(asset_pattern)
+api_url = f"https://api.github.com/repos/{repo}/releases/latest"
+req = urllib.request.Request(api_url, headers={"User-Agent": "AimiliVPN-installer"})
+with urllib.request.urlopen(req, timeout=30) as resp:
+    data = json.load(resp)
+for asset in data.get("assets", []):
+    name = asset.get("name", "")
+    url = asset.get("browser_download_url", "")
+    if pattern.search(name) and url:
+        print(url)
+        sys.exit(0)
+print(f"未找到匹配资产: {repo} / {asset_pattern}", file=sys.stderr)
+sys.exit(1)
+PY
+    ) || return 1
+
+    tmp_dir=$(mktemp -d)
+    download_path="${tmp_dir}/asset"
+    curl -fsSL "$asset_url" -o "$download_path"
+
+    case "$asset_url" in
+    *.tar.gz|*.tgz)
+        tar -xzf "$download_path" -C "$tmp_dir"
+        extracted_path=$(find "$tmp_dir" -type f -name "$binary_name" -perm -u+x | head -n 1)
+        if [ -z "$extracted_path" ]; then
+            extracted_path=$(find "$tmp_dir" -type f -name "$binary_name" | head -n 1)
+        fi
+        ;;
+    *)
+        extracted_path="$download_path"
+        ;;
+    esac
+
+    if [ -z "$extracted_path" ] || [ ! -f "$extracted_path" ]; then
+        echo -e "${YELLOW}  -> 警告: 未能从 ${asset_url} 提取 ${binary_name}${PLAIN}"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    install -m 0755 "$extracted_path" "$target_path"
+    rm -rf "$tmp_dir"
+    echo -e "${GREEN}  -> ${binary_name} 已安装到 ${target_path}${PLAIN}"
+}
+
+write_wireproxy_warp_config() {
+    mkdir -p "$WIREPROXY_DIR"
+    chmod 700 "$WIREPROXY_DIR"
+
+    if [ ! -f "${WIREPROXY_DIR}/wgcf-account.toml" ]; then
+        echo -e "  -> 正在注册 Cloudflare WARP 免费账户..."
+        (cd "$WIREPROXY_DIR" && yes | "$WGCF_BIN" register --accept-tos)
+    fi
+
+    echo -e "  -> 正在生成 WARP WireGuard 配置..."
+    (cd "$WIREPROXY_DIR" && "$WGCF_BIN" generate)
+    if [ ! -f "${WIREPROXY_DIR}/wgcf-profile.conf" ]; then
+        echo -e "${YELLOW}  -> 警告: wgcf 未生成 wgcf-profile.conf${PLAIN}"
+        return 1
+    fi
+
+    cp "${WIREPROXY_DIR}/wgcf-profile.conf" "$WIREPROXY_CONF"
+    cat >> "$WIREPROXY_CONF" <<EOF
+
+[Socks5]
+BindAddress = 127.0.0.1:40000
+EOF
+    chmod 600 "$WIREPROXY_CONF"
+}
+
+install_or_update_warp_service() {
+    if ! command -v systemctl >/dev/null 2>&1; then
+        echo -e "${YELLOW}  -> 当前服务管理器暂未自动配置 WARP 本地代理，请手动启动 wireproxy。${PLAIN}"
+        return 0
+    fi
+
+    local arch
+    arch=$(detect_release_arch)
+    install_github_release_binary "$WGCF_REPO" "wgcf" "linux_${arch}$" "$WGCF_BIN"
+    install_github_release_binary "$WIREPROXY_REPO" "wireproxy" "linux_${arch}\\.tar\\.gz$" "$WIREPROXY_BIN"
+    write_wireproxy_warp_config
+
+    echo -e "  -> 正在创建 WARP 本地代理服务 /lib/systemd/system/${AIMILIVPN_WARP_SERVICE} ..."
+    cat > "/lib/systemd/system/${AIMILIVPN_WARP_SERVICE}" <<EOF
+[Unit]
+Description=AimiliVPN Cloudflare WARP Local SOCKS Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${WIREPROXY_BIN} -c ${WIREPROXY_CONF}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable aimilivpn-warp.service
+    systemctl restart aimilivpn-warp.service
+}
 
 # 自动检测本地已安装版本当前所在的分支
 CURRENT_BRANCH=""
@@ -136,7 +298,8 @@ if command -v systemctl >/dev/null 2>&1; then
     cat > /lib/systemd/system/aimilivpn.service <<EOF
 [Unit]
 Description=AimiliVPN OpenVPN Manager with HTTP/SOCKS5 Proxy
-After=network.target
+After=network.target aimilivpn-warp.service
+Wants=aimilivpn-warp.service
 
 [Service]
 Type=simple
@@ -151,6 +314,12 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable aimilivpn.service
+    echo -e "  -> 正在安装并启动 WARP 本地 SOCKS5 出站代理 (${WARP_SOCKS_HOST}:${WARP_SOCKS_PORT}) ..."
+    if install_or_update_warp_service; then
+        echo -e "${GREEN}  -> WARP 本地代理已配置为 socks5://${WARP_SOCKS_HOST}:${WARP_SOCKS_PORT}${PLAIN}"
+    else
+        echo -e "${YELLOW}  -> 警告: WARP 本地代理自动安装失败，AimiliVPN 主服务将继续启动。${PLAIN}"
+    fi
 elif command -v rc-service >/dev/null 2>&1; then
     echo -e "  -> 检测到 OpenRC，正在创建服务配置 /etc/init.d/aimilivpn ..."
     cat > /etc/init.d/aimilivpn <<EOF
@@ -190,6 +359,9 @@ import shutil
 
 INSTALL_DIR = "/opt/aimilivpn"
 LOG_FILE = "/opt/aimilivpn/vpngate_data/vpngate.log"
+WARP_SERVICE = "aimilivpn-warp.service"
+WARP_PROXY_HOST = "127.0.0.1"
+WARP_PROXY_PORT = 40000
 
 def generate_random_password():
     import random
@@ -208,7 +380,7 @@ def generate_random_suffix():
 def load_ui_cfg():
     import json
     path = "/opt/aimilivpn/vpngate_data/ui_auth.json"
-    cfg = {"host": "::", "port": 8787, "secret_path": "EJsW2EeBo9lY", "password": ""}
+    cfg = {"host": "127.0.0.1", "port": 8787, "secret_path": "EJsW2EeBo9lY", "password": ""}
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -326,6 +498,17 @@ def check_port_listening(port):
             pass
     return False
 
+def check_tcp_listening(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.settimeout(0.2)
+        s.connect((host, port))
+        s.close()
+        return True
+    except Exception:
+        return False
+
 def get_service_pid(service_name="aimilivpn.service"):
     try:
         for pid_dir in os.listdir('/proc'):
@@ -343,6 +526,27 @@ def get_service_pid(service_name="aimilivpn.service"):
 
 def check_service_active(service_name="aimilivpn.service"):
     return get_service_pid(service_name) is not None
+
+def check_warp_service_active():
+    if shutil.which("systemctl"):
+        res = subprocess.run(["systemctl", "is-active", "--quiet", WARP_SERVICE])
+        return res.returncode == 0
+    try:
+        for pid_dir in os.listdir('/proc'):
+            if pid_dir.isdigit():
+                try:
+                    with open(os.path.join('/proc', pid_dir, 'cmdline'), 'r') as f:
+                        cmd = f.read().replace('\x00', ' ')
+                        if 'wireproxy' in cmd and '/etc/wireproxy/warp.conf' in cmd:
+                            return True
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return False
+
+def check_warp_proxy_listening():
+    return check_tcp_listening(WARP_PROXY_HOST, WARP_PROXY_PORT)
 
 def check_openvpn_process():
     try:
@@ -410,6 +614,14 @@ def print_status():
     else:
         gateway_status = f"{green}[已激活]{reset}" if gateway_ok else f"{red}[未启动]{reset}"
         openvpn_status = f"{green}[已连接]{reset}" if openvpn_ok else f"{red}[未连接]{reset}"
+    warp_service_ok = check_warp_service_active()
+    warp_proxy_ok = check_warp_proxy_listening()
+    if warp_service_ok and warp_proxy_ok:
+        warp_status = f"{green}[已激活]{reset}"
+    elif warp_service_ok:
+        warp_status = f"{yellow}[服务已启动，端口未就绪]{reset}"
+    else:
+        warp_status = f"{red}[未启动]{reset}"
     
     print_line("=======================================================")
     print_line(f"               {bold}AimiliVPN 管理终端 v2.0{reset}                  ")
@@ -418,6 +630,7 @@ def print_status():
     print_line(format_line(f"代理网关 (Port {proxy_port})", gateway_status))
     print_line(format_line(f"管理后台 (Port {ui_port})", backend_status))
     print_line(format_line("连接核心 (OpenVPN)", openvpn_status))
+    print_line(format_line(f"WARP 本地代理 ({WARP_PROXY_HOST}:{WARP_PROXY_PORT})", warp_status))
     
     host_cfg = cfg.get("host", "::")
     if host_cfg in ("127.0.0.1", "localhost"):
@@ -485,6 +698,10 @@ def run_service_cmd(cmd):
         subprocess.run(["rc-service", "aimilivpn", cmd])
     else:
         print("未检测到支持的服务管理器 (systemd/OpenRC)")
+
+def run_warp_service_cmd(cmd):
+    if shutil.which("systemctl"):
+        subprocess.run(["systemctl", cmd, WARP_SERVICE])
 
 def start_service():
     print("正在启动 AimiliVPN 服务...", flush=True)
@@ -580,18 +797,34 @@ def uninstall_service():
     if confirm.lower() == 'y':
         print("正在完全卸载 AimiliVPN...", flush=True)
         stop_service()
+        run_warp_service_cmd("stop")
+        run_warp_service_cmd("disable")
         if shutil.which("systemctl"):
             subprocess.run(["systemctl", "disable", "aimilivpn.service"])
             try:
                 os.unlink("/lib/systemd/system/aimilivpn.service")
             except Exception:
                 pass
+            try:
+                os.unlink("/lib/systemd/system/aimilivpn-warp.service")
+            except Exception:
+                pass
+            subprocess.run(["systemctl", "daemon-reload"])
         elif shutil.which("rc-service"):
             subprocess.run(["rc-update", "del", "aimilivpn"])
             try:
                 os.unlink("/etc/init.d/aimilivpn")
             except Exception:
                 pass
+        shutil.rmtree("/etc/wireproxy", ignore_errors=True)
+        try:
+            os.unlink("/usr/local/bin/wireproxy")
+        except Exception:
+            pass
+        try:
+            os.unlink("/usr/local/bin/wgcf")
+        except Exception:
+            pass
         try:
             os.unlink("/usr/bin/ml")
         except Exception:
@@ -1057,7 +1290,7 @@ import sys
 
 auth_file, ui_port, secret_path, username, password = sys.argv[1:6]
 cfg = {
-    "host": "::",
+    "host": "127.0.0.1",
     "port": int(ui_port),
     "proxy_port": 7928,
     "secret_path": secret_path,
@@ -1168,10 +1401,8 @@ PUBLIC_IPV6=$(curl -6 -s --max-time 3 https://api.ipify.org || curl -6 -s --max-
 echo -e "\n${GREEN}==========================================================${PLAIN}"
 echo -e "${GREEN}             AimiliVPN 源码一键部署已完成！${PLAIN}"
 echo -e "${GREEN}==========================================================${PLAIN}"
-echo -e "  * 网页控制面板:  ${BLUE}http://${PUBLIC_IP}:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
-if [ -n "$PUBLIC_IPV6" ]; then
-    echo -e "  * 网页控制面板(IPv6):  ${BLUE}http://[${PUBLIC_IPV6}]:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
-fi
+echo -e "  * 网页控制面板:  ${BLUE}http://127.0.0.1:${UI_PORT}/${SECRET_PATH}/${PLAIN}"
+echo -e "  * 远程访问提示:  ${YELLOW}ssh -L ${UI_PORT}:127.0.0.1:${UI_PORT} root@${PUBLIC_IP}${PLAIN}  建立 SSH 隧道后在本机浏览器打开上述地址。"
 echo -e "  * 网页管理账号:  ${YELLOW}${USERNAME}${PLAIN}"
 echo -e "  * 网页管理密码:  ${YELLOW}${PASSWORD}${PLAIN}"
 echo -e "  * HTTP/SOCKS5 代理端口:  ${BLUE}http://127.0.0.1:${PROXY_PORT}/${PLAIN}  或  ${BLUE}http://[::1]:${PROXY_PORT}/${PLAIN}"

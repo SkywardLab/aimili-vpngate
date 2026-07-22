@@ -117,9 +117,13 @@ OPENVPN_AUTH_USER = os.environ.get("OPENVPN_AUTH_USER", "vpn")
 OPENVPN_AUTH_PASS = os.environ.get("OPENVPN_AUTH_PASS", "vpn")
 LOCAL_PROXY_HOST = os.environ.get("LOCAL_PROXY_HOST", "127.0.0.1")
 LOCAL_PROXY_PORT = env_int("LOCAL_PROXY_PORT", 7928, 1, 65535)
-UI_HOST = os.environ.get("UI_HOST", "::")
+UI_HOST = os.environ.get("UI_HOST", "127.0.0.1")
 UI_PORT = env_int("UI_PORT", 8787, 1, 65535)
 INVALID_BACKOFF_SECONDS = env_int("INVALID_BACKOFF_SECONDS", 30 * 60, 1)
+PROXY_HEALTH_STARTUP_GRACE_SECONDS = env_int("PROXY_HEALTH_STARTUP_GRACE_SECONDS", 45, 1)
+DEFAULT_EGRESS_MODE = "vpngate"
+DEFAULT_WARP_PROXY_URL = "socks5://127.0.0.1:40000"
+VALID_EGRESS_MODES = {"vpngate", "warp"}
 
 ROOT_DIR = Path(sys.executable).resolve().parent if globals().get("__compiled__") else Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ["VPNGATE_DATA_DIR"]).resolve() if os.environ.get("VPNGATE_DATA_DIR") else ROOT_DIR / "vpngate_data"
@@ -143,6 +147,7 @@ last_collector_heartbeat = 0.0
 last_checker_heartbeat = 0.0
 last_pinger_heartbeat = 0.0
 server_start_time = time.time()
+active_node_connected_at = server_start_time
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(exist_ok=True, parents=True)
@@ -227,7 +232,9 @@ def load_ui_config() -> dict[str, Any]:
             "connection_enabled": True,
             "fixed_node_id": "",
             "favorite_node_ids": [],
-            "fav_fail_fallback": False
+            "fav_fail_fallback": False,
+            "egress_mode": DEFAULT_EGRESS_MODE,
+            "warp_proxy_url": DEFAULT_WARP_PROXY_URL,
         }
         updated = False
         if auth_file.exists():
@@ -235,7 +242,7 @@ def load_ui_config() -> dict[str, Any]:
                 data = json.loads(auth_file.read_text(encoding="utf-8"))
                 for key, val in data.items():
                     config[key] = val
-                for key in ["host", "port", "proxy_port", "routing_mode", "force_country", "routing_ip_type", "connection_enabled", "fixed_node_id", "favorite_node_ids", "fav_fail_fallback"]:
+                for key in ["host", "port", "proxy_port", "routing_mode", "force_country", "routing_ip_type", "connection_enabled", "fixed_node_id", "favorite_node_ids", "fav_fail_fallback", "egress_mode", "warp_proxy_url"]:
                     if key not in data:
                         updated = True
             except Exception:
@@ -262,6 +269,16 @@ def load_ui_config() -> dict[str, Any]:
             normalized_proxy_port = fallback_proxy_port
         if normalized_proxy_port != config.get("proxy_port"):
             config["proxy_port"] = normalized_proxy_port
+            updated = True
+
+        if config.get("egress_mode") not in VALID_EGRESS_MODES:
+            config["egress_mode"] = DEFAULT_EGRESS_MODE
+            updated = True
+
+        try:
+            vpn_utils.parse_warp_proxy_url(str(config.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL))
+        except ValueError:
+            config["warp_proxy_url"] = DEFAULT_WARP_PROXY_URL
             updated = True
             
         if not auth_file.exists() or updated:
@@ -380,18 +397,43 @@ def get_state() -> dict[str, Any]:
     state["fixed_node_id"] = ui_cfg.get("fixed_node_id", "")
     state["favorite_node_ids"] = ui_cfg.get("favorite_node_ids", [])
     state["fav_fail_fallback"] = False
+    state["egress_mode"] = ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    state["warp_proxy_url"] = ui_cfg.get("warp_proxy_url", DEFAULT_WARP_PROXY_URL)
+    state["egress_label"] = "WARP" if state["egress_mode"] == "warp" else "VPNGate"
     
     return state
+
+
+def get_egress_upstream_config() -> tuple[str, str, int, str | None, str | None] | None:
+    ui_cfg = load_ui_config()
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) != "warp":
+        return None
+    return vpn_utils.parse_warp_proxy_url(str(ui_cfg.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL))
+
+def validate_egress_settings(egress_mode: str, warp_proxy_url: str) -> tuple[str, str]:
+    mode = str(egress_mode or DEFAULT_EGRESS_MODE).strip().lower()
+    if mode not in VALID_EGRESS_MODES:
+        raise ValueError("无效的出站核心")
+    warp_url = str(warp_proxy_url or DEFAULT_WARP_PROXY_URL).strip()
+    vpn_utils.parse_warp_proxy_url(warp_url)
+    return mode, warp_url
+
+def prepare_vpngate_connect_config(ui_cfg: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(ui_cfg)
+    updated["egress_mode"] = "vpngate"
+    updated.setdefault("warp_proxy_url", DEFAULT_WARP_PROXY_URL)
+    return updated
 
 def safe_name(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return value.strip("._") or "node"
 
 def clear_active_connection_state(message: str) -> None:
-    global active_openvpn_process, active_openvpn_node_id
+    global active_openvpn_process, active_openvpn_node_id, active_node_connected_at
     stop_process(active_openvpn_process)
     active_openvpn_process = None
     active_openvpn_node_id = ""
+    active_node_connected_at = time.time()
     with lock:
         nodes = read_nodes()
         for item in nodes:
@@ -1127,7 +1169,7 @@ def cleanup_policy_routing() -> None:
         pass
 
 def stop_active_openvpn() -> None:
-    global active_openvpn_process, active_openvpn_node_id
+    global active_openvpn_process, active_openvpn_node_id, active_node_connected_at
     with lock:
         cleanup_policy_routing()
         config_to_delete = None
@@ -1140,6 +1182,7 @@ def stop_active_openvpn() -> None:
         stop_process(active_openvpn_process)
         active_openvpn_process = None
         active_openvpn_node_id = ""
+        active_node_connected_at = time.time()
         kill_existing_openvpn_processes()
         
         if config_to_delete:
@@ -1157,8 +1200,8 @@ def sort_all_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     available_nodes = sorted(
         [n for n in nodes if n.get("probe_status") == "available" or n.get("active")],
         key=lambda n: (
-            0 if n.get("ip_type") in ("residential", "mobile") else 1,
             parse_int(n.get("latency_ms")) or 999999,
+            0 if n.get("ip_type") in ("residential", "mobile") else 1,
             -parse_int(n.get("score"))
         )
     )
@@ -1171,6 +1214,20 @@ def sort_all_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda n: (-parse_int(n.get("score")), -float(n.get("probed_at", 0)))
     )
     return available_nodes + untested_nodes + unavailable_nodes
+
+def is_tun_not_ready_error(message: str) -> bool:
+    text = str(message or "")
+    return "ERR_ROUTE_DEV_NOT_FOUND" in text or "tun0" in text or "虚拟网卡" in text
+
+def should_defer_proxy_failure(
+    message: str,
+    active_node_connected_at: float,
+    now: float | None = None,
+) -> bool:
+    if not is_tun_not_ready_error(message):
+        return False
+    current_time = time.time() if now is None else now
+    return current_time - active_node_connected_at < PROXY_HEALTH_STARTUP_GRACE_SECONDS
 
 def apply_routing_filters(
     nodes: list[dict[str, Any]],
@@ -1289,8 +1346,41 @@ def enforce_active_node_allowed_by_routing(ui_cfg: dict[str, Any], reason: str =
             threading.Thread(target=auto_switch_node, daemon=True).start()
         return msg
 
+def apply_egress_mode_transition(previous_cfg: dict[str, Any], current_cfg: dict[str, Any]) -> str | None:
+    previous_mode = previous_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    current_mode = current_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
+    if previous_mode == current_mode:
+        return None
+    if current_mode == "warp":
+        stop_active_openvpn()
+        with lock:
+            nodes = read_nodes()
+            for item in nodes:
+                item["active"] = False
+            write_json(NODES_FILE, nodes)
+        message = "已切换至 WARP 出站核心，VPNGate 活动连接已停止"
+        set_state(
+            active_openvpn_node_id="",
+            active_node_latency="WARP",
+            proxy_ok=False,
+            proxy_ip="-",
+            proxy_latency_ms=0,
+            proxy_error="正在检测 WARP 出口连通性",
+            last_check_message=message,
+        )
+        log_to_json("INFO", "Routing", message)
+        return message
+    if current_mode == "vpngate":
+        message = "已切换至 VPNGate 出站核心，可手动连接节点或等待自动维护"
+        set_state(last_check_message=message)
+        log_to_json("INFO", "Routing", message)
+        return message
+    return None
+
 def reconnect_fixed_node_if_needed(ui_cfg: dict[str, Any]) -> bool:
     global is_connecting
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        return False
     if ui_cfg.get("routing_mode") != "fixed_ip" or active_openvpn_running():
         return False
     target_id = current_fixed_node_id(ui_cfg)
@@ -1523,6 +1613,10 @@ def auto_switch_node(attempt: int = 0) -> None:
         return
         
     ui_cfg = load_ui_config()
+    if ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        print("[自动切换] 当前处于 WARP 出站模式，暂停 VPNGate 自动切换。", flush=True)
+        return
+
     connection_enabled = ui_cfg.get("connection_enabled", True)
     if not connection_enabled:
         print("[自动切换] 连接已禁用，不进行自动切换。", flush=True)
@@ -1585,11 +1679,14 @@ def auto_switch_node(attempt: int = 0) -> None:
         threading.Thread(target=bg_fetch_and_switch, daemon=True).start()
 
 def connect_node(node_id: str) -> str:
-    global active_openvpn_process, active_openvpn_node_id, is_connecting
+    global active_openvpn_process, active_openvpn_node_id, is_connecting, active_node_connected_at
     node_id = str(node_id or "").strip()
     if not node_id:
         raise ValueError("Node id is required")
     stopped_existing = False
+    loaded_ui_cfg: dict[str, Any] | None = None
+    wrote_connect_ui_cfg = False
+    auth_file = DATA_DIR / "ui_auth.json"
     with lock:
         if is_connecting:
             print("[连接] 正在建立其他连接中，跳过此请求", flush=True)
@@ -1605,15 +1702,19 @@ def connect_node(node_id: str) -> str:
         if not node:
             raise ValueError(f"Node not found: {node_id}")
         
-        ui_cfg = load_ui_config()
+        loaded_ui_cfg = load_ui_config()
+        ui_cfg = prepare_vpngate_connect_config(loaded_ui_cfg)
+        defer_vpngate_switch = loaded_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp"
         validate_node_allowed_by_routing(node, ui_cfg)
         ui_cfg["connection_enabled"] = True
         if ui_cfg.get("routing_mode") == "fixed_ip":
             ui_cfg["fixed_node_id"] = node_id
-        auth_file = DATA_DIR / "ui_auth.json"
-        with lock:
-            DATA_DIR.mkdir(exist_ok=True, parents=True)
-            write_json(auth_file, ui_cfg)
+        if not defer_vpngate_switch:
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, ui_cfg)
+                wrote_connect_ui_cfg = True
+            apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
         
         set_state(active_node_latency="清理连接", last_check_message="正在关闭与清理旧的 VPN 连接及网卡...")
         stop_active_openvpn()
@@ -1646,10 +1747,18 @@ def connect_node(node_id: str) -> str:
             with lock:
                 active_openvpn_node_id = ""
             raise RuntimeError(message)
+
+        if defer_vpngate_switch:
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, ui_cfg)
+                wrote_connect_ui_cfg = True
+            apply_egress_mode_transition(loaded_ui_cfg, ui_cfg)
             
         with lock:
             active_openvpn_process = process
             active_openvpn_node_id = node_id
+            active_node_connected_at = time.time()
         
         set_state(active_node_latency="配置路由", last_check_message="正在配置策略路由规则与流量转发...")
         setup_policy_routing("tun0")
@@ -1698,6 +1807,15 @@ def connect_node(node_id: str) -> str:
         log_to_json("INFO", "VPN", f"节点 {node_id} 连接成功，出口网卡 tun0 已启用")
         return f"Connected {node_id}"
     except Exception as exc:
+        if (
+            wrote_connect_ui_cfg
+            and loaded_ui_cfg is not None
+            and loaded_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp"
+        ):
+            with lock:
+                DATA_DIR.mkdir(exist_ok=True, parents=True)
+                write_json(auth_file, loaded_ui_cfg)
+            apply_egress_mode_transition(ui_cfg, loaded_ui_cfg)
         if stopped_existing or (active_openvpn_node_id == node_id and not active_openvpn_running()):
             clear_active_connection_state(f"连接失败: {exc}")
         else:
@@ -1710,6 +1828,12 @@ def connect_node(node_id: str) -> str:
 def maintain_valid_nodes(force: bool = False) -> str:
     global active_openvpn_process, active_openvpn_node_id, is_connecting
     ensure_dirs()
+    if not force and load_ui_config().get("egress_mode", DEFAULT_EGRESS_MODE) == "warp":
+        msg = "当前处于 WARP 出站模式，暂停 VPNGate 节点自动维护。"
+        print(f"[维护线程] {msg}", flush=True)
+        log_to_json("INFO", "Main", msg)
+        set_state(last_check_message=msg)
+        return msg
     if not maintenance_lock.acquire(blocking=False):
         msg = "节点维护任务正在运行，请稍后再试"
         set_state(last_check_message=msg)
@@ -1964,29 +2088,26 @@ LOGIN_HTML = r"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AimiliVPN - 安全登录</title>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-dark: #090d16;
-      --bg-surface: rgba(15, 23, 42, 0.45);
-      --border-color: rgba(255, 255, 255, 0.08);
-      --text-primary: #f8fafc;
-      --text-secondary: #94a3b8;
-      --primary: #6366f1;
-      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-      --primary-hover: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+      --bg-dark: #f5f5f7;
+      --bg-surface: #ffffff;
+      --bg-surface-hover: #fafafc;
+      --border-color: rgba(0, 0, 0, 0.08);
+      --border-color-hover: #d2d2d7;
+      --text-primary: #1d1d1f;
+      --text-secondary: #7a7a7a;
+      --primary: #0066cc;
+      --primary-focus: #0071e3;
       --success: #10b981;
-      --danger: #f43f5e;
+      --danger: #d70015;
     }
 
     body {
       margin: 0;
       padding: 0;
-      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background-color: var(--bg-dark);
-      background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
       height: 100vh;
       display: flex;
       align-items: center;
@@ -2003,12 +2124,10 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .login-card {
       background: var(--bg-surface);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--border-color);
-      border-radius: 20px;
+      border-radius: 18px;
       padding: 40px 32px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+      box-shadow: none;
       text-align: center;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
@@ -2016,9 +2135,9 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .brand-logo {
       width: 64px;
       height: 64px;
-      background: rgba(99, 102, 241, 0.1);
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-radius: 16px;
+      background: var(--surface-pearl, #fafafc);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -2032,7 +2151,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       position: absolute;
       width: 100%;
       height: 100%;
-      border-radius: 16px;
+      border-radius: 18px;
       border: 1px solid var(--success);
       opacity: 0.5;
       animation: ripple 2s infinite ease-out;
@@ -2045,10 +2164,10 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .login-title {
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--text-primary);
       margin: 0 0 8px 0;
-      letter-spacing: 0.5px;
+      letter-spacing: -0.28px;
     }
 
     .login-subtitle {
@@ -2064,7 +2183,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 
     .form-label {
       display: block;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       color: var(--text-secondary);
       margin-bottom: 8px;
@@ -2078,27 +2197,27 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .input-field {
       width: 100%;
       height: 48px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
-      border-radius: 10px;
+      border-radius: 9999px;
       padding: 0 16px;
       box-sizing: border-box;
       color: var(--text-primary);
       font-family: inherit;
-      font-size: 15px;
+      font-size: 17px;
       outline: none;
       transition: all 0.2s ease;
     }
 
     .input-field:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.6);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .error-message {
       color: var(--danger);
-      font-size: 13px;
+      font-size: 14px;
       margin-top: 8px;
       min-height: 18px;
       text-align: left;
@@ -2109,12 +2228,12 @@ LOGIN_HTML = r"""<!DOCTYPE html>
     .login-btn {
       width: 100%;
       height: 48px;
-      background: var(--primary-gradient);
+      background: var(--primary);
       border: none;
-      border-radius: 10px;
+      border-radius: 9999px;
       color: white;
       font-family: inherit;
-      font-size: 15px;
+      font-size: 17px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s ease;
@@ -2122,17 +2241,17 @@ LOGIN_HTML = r"""<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       gap: 8px;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+      box-shadow: none;
     }
 
     .login-btn:hover {
-      background: var(--primary-hover);
-      transform: translateY(-1px);
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+      background: var(--primary-focus);
+      transform: scale(0.95);
+      box-shadow: none;
     }
 
     .login-btn:active {
-      transform: translateY(1px);
+      transform: scale(0.95);
     }
 
     .login-btn:disabled {
@@ -2222,48 +2341,42 @@ INDEX_HTML = r"""<!doctype html>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AimiliVPN 节点池管理系统</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-    
     :root {
-      --bg-dark: #0b0f19;
-      --bg-surface: rgba(22, 30, 49, 0.6);
-      --bg-surface-hover: rgba(30, 41, 67, 0.85);
-      --border-color: rgba(255, 255, 255, 0.08);
-      --border-color-hover: rgba(99, 102, 241, 0.35);
-      --text-primary: #f3f4f6;
-      --text-secondary: #9ca3af;
-      --primary: #6366f1;
-      --primary-gradient: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-      --primary-hover: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
-      --success: #10b981;
-      --success-gradient: linear-gradient(135deg, #34d399 0%, #059669 100%);
-      --danger: #f43f5e;
-      --danger-gradient: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
-      --warning: #f59e0b;
-      --warning-gradient: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
-      --active-row-bg: rgba(16, 185, 129, 0.06);
-      --active-row-border: rgba(16, 185, 129, 0.25);
+      --bg-dark: #f5f5f7;
+      --bg-surface: #ffffff;
+      --bg-surface-hover: #fafafc;
+      --border-color: rgba(0, 0, 0, 0.08);
+      --border-color-hover: #d2d2d7;
+      --text-primary: #1d1d1f;
+      --text-secondary: #7a7a7a;
+      --primary: #0066cc;
+      --primary-focus: #0071e3;
+      --primary-on-dark: #2997ff;
+      --success: #008f5a;
+      --danger: #d70015;
+      --warning: #b26a00;
+      --canvas: #ffffff;
+      --canvas-parchment: #f5f5f7;
+      --surface-pearl: #fafafc;
+      --active-row-bg: rgba(0, 143, 90, 0.07);
+      --active-row-border: rgba(0, 143, 90, 0.25);
     }
 
     body {
       margin: 0;
-      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background-color: var(--bg-dark);
-      background-image: 
-        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%),
-        radial-gradient(at 50% 100%, rgba(79, 70, 229, 0.05) 0px, transparent 50%);
-      background-attachment: fixed;
       color: var(--text-primary);
+      font-size: 17px;
+      line-height: 1.47;
+      letter-spacing: -0.374px;
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
     }
 
     header {
       padding: 16px 32px;
-      background: rgba(11, 15, 25, 0.7);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: rgba(245, 245, 247, 0.8);
       border-bottom: 1px solid var(--border-color);
       display: flex;
       justify-content: space-between;
@@ -2281,11 +2394,9 @@ INDEX_HTML = r"""<!doctype html>
 
     h1 {
       font-size: 20px;
-      font-weight: 700;
+      font-weight: 600;
       margin: 0;
-      background: linear-gradient(135deg, #a5b4fc 0%, #6366f1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      background: transparent;
       letter-spacing: -0.5px;
       display: flex;
       align-items: center;
@@ -2293,7 +2404,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .status {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       margin-top: 4px;
       display: flex;
@@ -2318,17 +2429,17 @@ INDEX_HTML = r"""<!doctype html>
     button, .btn-telegram {
       height: 38px;
       border: 1px solid var(--border-color);
-      border-radius: 8px;
+      border-radius: 9999px;
       padding: 0 16px;
       font-weight: 600;
-      font-size: 13px;
+      font-size: 14px;
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      background: rgba(255, 255, 255, 0.04);
+      background: var(--canvas);
       color: var(--text-primary);
       white-space: nowrap;
       text-decoration: none;
@@ -2336,46 +2447,50 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     button:hover {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(255, 255, 255, 0.15);
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: var(--border-color-hover);
+      transform: scale(0.95);
     }
 
     .btn-telegram {
-      background: rgba(43, 162, 223, 0.15);
-      border: 1px solid rgba(43, 162, 223, 0.3);
-      color: #2ba2df;
+      background: transparent;
+      border: 1px solid var(--primary);
+      color: var(--primary);
     }
 
     .btn-telegram:hover {
-      background: rgba(43, 162, 223, 0.25);
-      border-color: rgba(43, 162, 223, 0.5);
-      color: #2ba2df;
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: var(--primary-focus);
+      color: var(--primary);
+      transform: scale(0.95);
     }
 
     .btn-primary {
-      background: var(--primary-gradient);
+      background: var(--primary);
       color: white;
       border: none;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+      box-shadow: none;
     }
 
     .btn-primary:hover {
-      background: var(--primary-hover);
-      box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
+      background: var(--primary-focus);
+      box-shadow: none;
+    }
+
+    button:active, .btn-telegram:active, .btn-primary:active {
+      transform: scale(0.95);
     }
 
     .btn-danger {
-      background: var(--danger-gradient);
+      background: var(--danger);
       color: white;
       border: none;
-      box-shadow: 0 4px 12px rgba(244, 63, 94, 0.2);
+      box-shadow: none;
     }
 
     .btn-danger:hover {
       opacity: 0.95;
-      box-shadow: 0 6px 16px rgba(244, 63, 94, 0.35);
+      box-shadow: none;
     }
 
     button:disabled {
@@ -2392,17 +2507,15 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .active-card {
-      background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(79, 70, 229, 0.04) 100%);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(99, 102, 241, 0.25);
-      border-radius: 16px;
+      background: var(--canvas);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
       padding: 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 24px;
-      box-shadow: 0 8px 32px rgba(99, 102, 241, 0.12);
+      box-shadow: none;
       transition: all 0.3s ease;
       width: 100%;
       box-sizing: border-box;
@@ -2423,10 +2536,10 @@ INDEX_HTML = r"""<!doctype html>
     
     .active-card-title {
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: #a5b4fc;
+      color: var(--primary);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -2434,14 +2547,14 @@ INDEX_HTML = r"""<!doctype html>
     
     .active-card-value {
       font-size: 24px;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--text-primary);
     }
     
     .active-card-meta {
       display: flex;
       gap: 16px;
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       flex-wrap: wrap;
     }
@@ -2459,10 +2572,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .stat {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
+      border-radius: 18px;
       padding: 20px;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
@@ -2475,8 +2586,8 @@ INDEX_HTML = r"""<!doctype html>
     .stat:hover {
       background: var(--bg-surface-hover);
       border-color: var(--border-color-hover);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.1);
+      transform: scale(0.995);
+      box-shadow: none;
     }
 
     .stat-info {
@@ -2486,16 +2597,14 @@ INDEX_HTML = r"""<!doctype html>
 
     .stat strong {
       font-size: 32px;
-      font-weight: 700;
+      font-weight: 600;
       display: block;
       margin-bottom: 4px;
-      background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--text-primary);
     }
 
     .stat span {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
       font-weight: 500;
     }
@@ -2503,12 +2612,12 @@ INDEX_HTML = r"""<!doctype html>
     .stat-icon-wrapper {
       width: 44px;
       height: 44px;
-      border-radius: 10px;
-      background: rgba(255, 255, 255, 0.04);
+      border-radius: 9999px;
+      background: var(--canvas);
       display: flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(0, 0, 0, 0.08);
     }
 
     .stat-icon {
@@ -2526,7 +2635,7 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       gap: 6px;
       padding: 4px 10px;
-      background: rgba(255, 255, 255, 0.05);
+      background: var(--surface-pearl);
       border: 1px solid var(--border-color);
       border-radius: 6px;
       color: var(--text-secondary);
@@ -2538,10 +2647,10 @@ INDEX_HTML = r"""<!doctype html>
       box-sizing: border-box;
     }
     .header-badge-link:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--canvas);
       border-color: var(--border-color-hover);
       color: var(--text-primary);
-      transform: translateY(-1px);
+      transform: scale(0.95);
     }
     .flex-row-container {
       display: flex;
@@ -2554,146 +2663,11 @@ INDEX_HTML = r"""<!doctype html>
       min-width: 320px;
       margin-bottom: 0 !important;
     }
-    .vps-recommend-tab {
-      position: fixed;
-      right: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 38px;
-      background: var(--primary-gradient);
-      border: 1px solid var(--border-color-hover);
-      border-right: none;
-      border-radius: 8px 0 0 8px;
-      padding: 16px 6px;
-      color: white;
-      font-weight: 700;
-      font-size: 13px;
-      line-height: 1.4;
-      text-align: center;
-      cursor: pointer;
-      z-index: 999;
-      box-shadow: -4px 0 20px rgba(99, 102, 241, 0.3);
-      transition: all 0.3s ease;
-      writing-mode: vertical-rl;
-      text-orientation: mixed;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-    }
-    .vps-recommend-tab:hover {
-      padding-right: 10px;
-      box-shadow: -4px 0 25px rgba(99, 102, 241, 0.5);
-    }
-
-    .vps-links {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 16px;
-    }
-    
-    @media (max-width: 576px) {
-      .vps-links {
-        grid-template-columns: 1fr;
-      }
-    }
-    
-    .vps-item {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.04);
-      border-radius: 12px;
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      justify-content: space-between;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    }
-    
-    .vps-item:hover {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: rgba(99, 102, 241, 0.3);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 30px rgba(99, 102, 241, 0.1);
-    }
-    
-    .vps-tag {
-      font-size: 11px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 6px;
-      width: fit-content;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .tag-normal {
-      background: rgba(99, 102, 241, 0.15);
-      color: #a5b4fc;
-      border: 1px solid rgba(99, 102, 241, 0.2);
-    }
-    
-    .tag-premium {
-      background: rgba(16, 185, 129, 0.15);
-      color: #6ee7b7;
-      border: 1px solid rgba(16, 185, 129, 0.2);
-    }
-    
-    .vps-desc {
-      font-size: 13px;
-      color: var(--text-secondary);
-      line-height: 1.6;
-      flex: 1;
-    }
-    
-    .vps-btn {
-      align-self: stretch;
-      text-decoration: none;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      color: var(--text-primary);
-      font-size: 12px;
-      font-weight: 600;
-      padding: 8px 16px;
-      border-radius: 8px;
-      transition: all 0.2s ease;
-      text-align: center;
-    }
-    
-    .vps-item:hover .vps-btn {
-      background: var(--primary-gradient);
-      border-color: transparent;
-      color: white;
-      box-shadow: 0 4px 10px rgba(99, 102, 241, 0.2);
-    }
-    
-    .vps-footer {
-      border-top: 1px dashed rgba(255, 255, 255, 0.08);
-      padding-top: 12px;
-      font-size: 13px;
-      color: var(--text-secondary);
-      text-align: center;
-    }
-    
-    .forum-link {
-      color: #818cf8;
-      font-weight: 700;
-      text-decoration: none;
-      transition: color 0.2s ease;
-    }
-    
-    .forum-link:hover {
-      color: #a5b4fc;
-      text-decoration: underline;
-    }
 
     .toolbar {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 12px;
+      border-radius: 18px;
       padding: 16px;
       margin-bottom: 24px;
       display: flex;
@@ -2705,7 +2679,7 @@ INDEX_HTML = r"""<!doctype html>
     .toolbar select {
       width: 180px;
       height: 42px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 12px;
@@ -2719,15 +2693,15 @@ INDEX_HTML = r"""<!doctype html>
 
     .toolbar select:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-      background: #0f172a;
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .toolbar input {
       flex: 1;
       min-width: 250px;
       height: 42px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 16px;
@@ -2740,18 +2714,16 @@ INDEX_HTML = r"""<!doctype html>
     .toolbar input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.8);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
 
     .table-wrapper {
       background: var(--bg-surface);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       border: 1px solid var(--border-color);
-      border-radius: 16px;
+      border-radius: 18px;
       overflow: hidden;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      box-shadow: none;
     }
 
     .table-container {
@@ -2772,9 +2744,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     th {
-      background: rgba(17, 24, 39, 0.4);
+      background: var(--surface-pearl);
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.8px;
       color: var(--text-secondary);
@@ -2788,7 +2760,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     tr:hover {
-      background: rgba(255, 255, 255, 0.015);
+      background: var(--surface-pearl);
     }
 
     .active-row {
@@ -2860,9 +2832,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .current-badge {
-      background: rgba(99, 102, 241, 0.15);
-      color: #818cf8;
-      border-color: rgba(99, 102, 241, 0.3);
+      background: rgba(0, 102, 204, 0.08);
+      color: var(--primary);
+      border-color: rgba(0, 102, 204, 0.3);
     }
 
     .table-actions {
@@ -2872,8 +2844,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .connect-btn {
       background: transparent;
-      color: #818cf8;
-      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: var(--primary);
+      border: 1px solid var(--primary);
       border-radius: 6px;
       padding: 0 12px;
       height: 30px;
@@ -2884,10 +2856,10 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .connect-btn:hover:not(:disabled) {
-      background: var(--primary-gradient);
+      background: var(--primary);
       color: white;
       border-color: transparent;
-      box-shadow: 0 4px 10px rgba(99, 102, 241, 0.3);
+      box-shadow: none;
     }
 
     .connect-btn:disabled {
@@ -2909,10 +2881,10 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     .test-btn:hover:not(:disabled) {
-      background: var(--success-gradient);
+      background: var(--success);
       color: white;
       border-color: transparent;
-      box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);
+      box-shadow: none;
     }
 
     .test-btn:disabled {
@@ -2922,8 +2894,8 @@ INDEX_HTML = r"""<!doctype html>
 
     .mono {
       font-family: 'JetBrains Mono', Consolas, monospace;
-      font-size: 13px;
-      color: #e2e8f0;
+      font-size: 14px;
+      color: var(--text-primary);
     }
 
     .latency-val {
@@ -2993,10 +2965,10 @@ INDEX_HTML = r"""<!doctype html>
       right: 0;
       margin-top: 6px;
       min-width: 140px;
-      background: rgba(22, 30, 49, 0.95);
+      background: var(--canvas);
       border: 1px solid var(--border-color);
       border-radius: 8px;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      box-shadow: none;
       z-index: 1000;
       overflow: hidden;
       backdrop-filter: blur(10px);
@@ -3009,12 +2981,12 @@ INDEX_HTML = r"""<!doctype html>
       padding: 10px 16px;
       color: var(--text-primary);
       text-decoration: none;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       transition: background 0.2s;
     }
     .dropdown-content a:hover {
-      background: rgba(255,255,255,0.08);
+      background: var(--surface-pearl);
     }
     
     /* Modal styles */
@@ -3027,20 +2999,20 @@ INDEX_HTML = r"""<!doctype html>
       width: 100%;
       height: 100%;
       overflow: auto;
-      background-color: rgba(9, 13, 22, 0.7);
+      background-color: rgba(245, 245, 247, 0.72);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       align-items: center;
       justify-content: center;
     }
     .modal-content {
-      background: rgba(22, 30, 49, 0.9);
+      background: var(--canvas);
       border: 1px solid var(--border-color);
-      border-radius: 20px;
+      border-radius: 18px;
       width: 90%;
       max-width: 480px;
       padding: 32px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      box-shadow: none;
       position: relative;
       box-sizing: border-box;
       animation: modalFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3057,7 +3029,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .form-label {
       display: block;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 500;
       color: var(--text-secondary);
       margin-bottom: 8px;
@@ -3066,7 +3038,7 @@ INDEX_HTML = r"""<!doctype html>
     .input-field {
       width: 100%;
       height: 40px;
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--canvas, #ffffff);
       border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0 12px;
@@ -3079,12 +3051,12 @@ INDEX_HTML = r"""<!doctype html>
     }
     .input-field:focus {
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
-      background: rgba(15, 23, 42, 0.6);
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18);
+      background: #ffffff;
     }
     select option {
-      background-color: #0f172a;
-      color: #f8fafc;
+      background-color: #ffffff;
+      color: var(--text-primary);
     }
     
     /* Option Card Styles for Proxy/Routing Settings */
@@ -3102,9 +3074,9 @@ INDEX_HTML = r"""<!doctype html>
     }
     
     .option-card {
-      background: rgba(255, 255, 255, 0.02);
+      background: var(--surface-pearl);
       border: 1px solid var(--border-color);
-      border-radius: 10px;
+      border-radius: 9999px;
       padding: 12px 14px;
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -3114,19 +3086,19 @@ INDEX_HTML = r"""<!doctype html>
     }
     
     .option-card:hover {
-      background: rgba(255, 255, 255, 0.05);
-      border-color: rgba(99, 102, 241, 0.25);
-      transform: translateY(-1px);
+      background: var(--surface-pearl);
+      border-color: rgba(0, 102, 204, 0.25);
+      transform: scale(0.95);
     }
     
     .option-card.active {
-      background: rgba(99, 102, 241, 0.08);
+      background: rgba(0, 102, 204, 0.06);
       border-color: var(--primary);
-      box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
+      box-shadow: none;
     }
     
     .option-card-title {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       color: var(--text-primary);
       margin-bottom: 4px;
@@ -3137,13 +3109,104 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text-secondary);
       line-height: 1.3;
     }
+
+    .egress-option-group {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .egress-option-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: var(--surface-pearl);
+      border: 1px solid var(--border-color);
+      border-radius: 18px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      user-select: none;
+      text-align: left;
+    }
+
+    .egress-option-card:hover {
+      background: #ffffff;
+      border-color: rgba(0, 102, 204, 0.25);
+      transform: scale(0.98);
+    }
+
+    .egress-option-card.active {
+      background: rgba(0, 102, 204, 0.06);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.10);
+    }
+
+    .egress-option-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      line-height: 1.25;
+    }
+
+    .egress-option-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+
+    /* DESIGN.md Apple-style overrides for inline-heavy panels */
+    #favorites_panel,
+    #gateway_services_list > div,
+    #net_routing_warning {
+      background: var(--canvas) !important;
+      border-color: var(--border-color) !important;
+      border-radius: 18px !important;
+      color: var(--text-secondary) !important;
+      box-shadow: none !important;
+    }
+
+    .modal button[style*="border-radius: 50%"] {
+      border-radius: 9999px !important;
+      background: var(--surface-pearl) !important;
+    }
+
+    input, select, textarea, .input-field, .toolbar select, .toolbar input {
+      background: var(--canvas) !important;
+      color: var(--text-primary) !important;
+      border-color: var(--border-color) !important;
+      border-radius: 9999px !important;
+    }
+
+    input:focus, select:focus, textarea:focus, .input-field:focus, .toolbar select:focus, .toolbar input:focus {
+      border-color: var(--primary-focus) !important;
+      box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.18) !important;
+      outline: none !important;
+    }
+
+    .btn-primary,
+    .connect-btn:hover:not(:disabled),
+    .test-btn:hover:not(:disabled) {
+      background: var(--primary) !important;
+      border-color: var(--primary) !important;
+      color: #ffffff !important;
+      border-radius: 9999px !important;
+      box-shadow: none !important;
+    }
+
+    .connect-btn, .test-btn, .toolbar-btn, .header-badge-link {
+      border-radius: 9999px !important;
+      box-shadow: none !important;
+    }
   </style>
 </head>
 <body>
 <header>
   <div class="brand">
     <h1>
-      <svg xmlns="http://www.w3.org/2000/svg" style="width:24px; height:24px; color:#818cf8;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+      <svg xmlns="http://www.w3.org/2000/svg" style="width:24px; height:24px; color:var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
       AimiliVPN 节点管理系统
     </h1>
     <div id="status" class="status" style="display: none;"><span class="status-dot"></span>服务加载中...</div>
@@ -3151,26 +3214,26 @@ INDEX_HTML = r"""<!doctype html>
   <div class="btn-group">
 
     <div class="dropdown">
-      <button id="github_btn" class="btn-primary" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
+      <button id="github_btn" class="btn-primary" style="background: rgba(0, 0, 0, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align: middle; margin-right: 4px;"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         GITHUB
         <svg xmlns="http://www.w3.org/2000/svg" style="width:12px; height:12px; margin-left: 2px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
       </button>
       <div id="github_dropdown" class="dropdown-content">
-        <a href="https://github.com/baoweise-bot/aimili-vpngate" target="_blank">正式版</a>
-        <a href="https://github.com/baoweise-bot/aimili-vpngate/tree/bate" target="_blank">测试版</a>
+        <a href="https://github.com/SkywardLab/aimili-vpngate" target="_blank">正式版</a>
+        <a href="https://github.com/SkywardLab/aimili-vpngate/tree/bate" target="_blank">测试版</a>
       </div>
     </div>
     <a href="https://t.me/arestemple" target="_blank" class="btn-telegram">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align: middle; margin-right: 4px;"><path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8.287 5.906c-.778.324-2.334.994-4.666 2.01-.378.15-.577.298-.595.442-.03.243.275.339.69.47l.175.055c.408.133.958.288 1.243.294.26.006.549-.1.868-.32 2.179-1.471 3.304-2.214 3.374-2.23.05-.012.12-.026.166.016.047.041.042.12.037.141-.03.129-1.227 1.241-1.846 1.817-.193.18-.33.307-.358.336-.063.065-.129.13-.19.193-.34.347-.597.609-.043.974.265.175.474.319.684.457.228.15.457.301.765.503.074.049.143.098.207.143.297.206.58.404.916.373.195-.018.398-.2.502-.754.25-1.332.74-4.22.842-5.281.01-.088.001-.22-.103-.312-.104-.092-.252-.09-.323-.087a1.52 1.52 0 0 0-.254.04z"/></svg>
       Telegram
     </a>
-    <button id="refresh" class="btn-primary" style="background: var(--success-gradient);">
+    <button id="refresh" class="btn-primary" style="background: var(--primary);">
       <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.5" /></svg>
       更新节点
     </button>
     <div class="dropdown">
-      <button id="admin_btn" class="btn-primary" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
+      <button id="admin_btn" class="btn-primary" style="background: rgba(0, 0, 0, 0.08); border: 1px solid var(--border-color); color: var(--text-primary);">
         <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
         管理员
         <svg xmlns="http://www.w3.org/2000/svg" style="width:12px; height:12px; margin-left: 2px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
@@ -3192,7 +3255,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
           日志
         </a>
-        <a href="javascript:void(0)" onclick="logoutAdmin()" style="color: var(--danger); border-top: 1px solid rgba(255,255,255,0.05);">
+        <a href="javascript:void(0)" onclick="logoutAdmin()" style="color: var(--danger); border-top: 1px solid #fafafc;">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
           退出
         </a>
@@ -3224,6 +3287,9 @@ INDEX_HTML = r"""<!doctype html>
       <option value="residential">住宅IP</option>
       <option value="hosting">机房IP</option>
     </select>
+    <button id="btn_test_all_nodes" class="toolbar-btn" type="button" onclick="testAllFilteredNodes()" style="height: 42px; gap: 6px;">
+      测试全部节点
+    </button>
     <button id="btn_favorites" class="toolbar-btn" type="button" onclick="toggleFavoritesView()" style="margin-left: auto; height: 42px; gap: 6px;">
       <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.907c.961 0 1.371 1.24.588 1.81l-3.97 2.883a1 1 0 00-.364 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.971-2.883a1 1 0 00-1.175 0l-3.97 2.883c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.364-1.118l-3.97-2.883c-.783-.57-.372-1.81.588-1.81h4.906a1 1 0 00.951-.69l1.519-4.674z" />
@@ -3231,7 +3297,7 @@ INDEX_HTML = r"""<!doctype html>
       收藏菜单
     </button>
   </section>
-  <div id="favorites_panel" style="display: none; background: rgba(22, 30, 49, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; margin-bottom: 20px; animation: modalFadeIn 0.25s ease-out;">
+  <div id="favorites_panel" style="display: none; background: #ffffff; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; margin-bottom: 20px; animation: modalFadeIn 0.25s ease-out;">
     <div style="display: flex; flex-direction: column; gap: 16px;">
       <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
         <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -3249,7 +3315,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
       </div>
       
-      <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;">
+      <div style="border-top: 1px solid rgba(0,0,0,0.08); padding-top: 16px;">
         <div style="padding: 10px 14px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; font-size: 12px; color: var(--warning); line-height: 1.5;">
           <strong>仅用收藏是强锁定模式。</strong>开启后只会连接收藏节点；如果收藏节点全部不可用，系统不会切换到非收藏节点。
         </div>
@@ -3265,6 +3331,7 @@ INDEX_HTML = r"""<!doctype html>
             <th style="width: 90px;">状态</th>
             <th style="width: 220px;">IP 地址 : 端口</th>
             <th>物理位置</th>
+            <th style="width: 100px;">延迟</th>
             <th>运营主体 / ISP</th>
             <th style="width: 110px;">IP 类型</th>
             <th style="width: 180px;">操作</th>
@@ -3299,7 +3366,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
           网页安全
         </h3>
-        <button type="button" onclick="closeCredentialsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeCredentialsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3344,7 +3411,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
           代理设置
         </h3>
-        <button type="button" onclick="closeNetworkModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeNetworkModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3358,9 +3425,28 @@ INDEX_HTML = r"""<!doctype html>
           <input type="number" id="net_proxy_port" class="input-field" required min="1024" max="65535" placeholder="7928">
         </div>
 
-        <div style="border-top: 1px dashed rgba(255,255,255,0.08); padding-top: 16px; margin-bottom: 16px;">
+        <div style="border-top: 1px dashed #fafafc; padding-top: 16px; margin-bottom: 16px;">
           <div class="form-group" style="margin-bottom: 16px;">
             <label class="form-label">IP 出站路由模式</label>
+            <input type="hidden" id="net_egress_mode" value="vpngate">
+            <div class="form-group">
+              <label class="form-label">出站核心</label>
+              <div class="egress-option-group" id="egress_mode_group">
+                <div class="egress-option-card active" data-value="vpngate" onclick="setEgressMode('vpngate')">
+                  <div class="egress-option-title">VPNGate 节点</div>
+                  <div class="egress-option-desc">使用 OpenVPN 节点出站</div>
+                </div>
+                <div class="egress-option-card" data-value="warp" onclick="setEgressMode('warp')">
+                  <div class="egress-option-title">Cloudflare WARP</div>
+                  <div class="egress-option-desc">使用本机 WARP 代理出站</div>
+                </div>
+              </div>
+            </div>
+            <div class="form-group" id="net_warp_proxy_group" style="display:none;">
+              <label for="net_warp_proxy_url">WARP 代理地址</label>
+              <input type="text" id="net_warp_proxy_url" placeholder="socks5://127.0.0.1:40000">
+              <div class="hint">请先在本机启动 WARP 本地代理，例如 wireproxy 或 warp-cli 对应的代理端口。</div>
+            </div>
             <input type="hidden" id="net_routing_mode" value="auto">
             <div class="option-group" id="routing_mode_group">
               <div class="option-card active" data-value="auto" onclick="setRoutingMode('auto')">
@@ -3380,7 +3466,7 @@ INDEX_HTML = r"""<!doctype html>
           
           <div id="net_force_country_group" class="form-group" style="margin-bottom: 16px; display: none;">
             <label class="form-label" for="net_force_country">锁定国家地区</label>
-            <select id="net_force_country" class="input-field" style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); color: var(--text-primary); outline: none; cursor: pointer; width: 100%; height: 40px; border-radius: 8px; padding: 0 12px;">
+            <select id="net_force_country" class="input-field" style="background: #ffffff; border: 1px solid var(--border-color); color: var(--text-primary); outline: none; cursor: pointer; width: 100%; height: 40px; border-radius: 8px; padding: 0 12px;">
               <option value="">正在加载节点国家...</option>
             </select>
           </div>
@@ -3404,7 +3490,7 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
           
-          <div id="net_routing_warning" style="font-size: 12px; color: var(--text-secondary); line-height: 1.4; padding: 8px 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; margin-top: 8px;">
+          <div id="net_routing_warning" style="font-size: 12px; color: var(--text-secondary); line-height: 1.4; padding: 8px 12px; background: rgba(255, 255, 255, 0.02); border: 1px solid #fafafc; border-radius: 6px; margin-top: 8px;">
             ℹ️ <strong>自动配置</strong>：全自动测试并选择最佳IP。在使用过程中，如果当前连接节点没有失效，将不再更换IP；如果当前节点失效，系统将立刻秒级自动漂移到其他最快的可用节点。
           </div>
         </div>
@@ -3418,51 +3504,6 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 
 
-  <!-- VPS 购买推荐 Modal -->
-  <div id="vps_recommend_modal" class="modal">
-    <div class="modal-content" style="max-width: 640px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
-        <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--warning);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364.364l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
-          VPS 购买推荐
-        </h3>
-        <button type="button" onclick="closeVpsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-        </button>
-      </div>
-      
-      <div class="vps-links">
-        <div class="vps-item">
-          <span class="vps-tag tag-normal">RNVPS (RackNerd) 推荐</span>
-          <span class="vps-desc">超低折扣价格，性价比极高，日常使用实惠方便，海外多机房可选，非常适合普通大众用户。</span>
-          <a href="https://my.racknerd.com/aff.php?aff=18708" target="_blank" class="vps-btn">点击进入官网</a>
-        </div>
-        <div class="vps-item">
-          <span class="vps-tag tag-premium">搬瓦工 (Bandwagon) 推荐</span>
-          <span class="vps-desc">直连三网顶级专线，经典高带宽 CN2 GIA/9929 优化线路，极致速度且超凡稳定，高端用户首选。</span>
-          <a href="https://bandwagonhost.com/aff.php?aff=81790" target="_blank" class="vps-btn">点击进入官网</a>
-        </div>
-      </div>
-      
-      <div class="vps-footer" style="margin-top: 20px;">
-        官方技术支持及优质资源交流论坛：<a href="https://339936.xyz" target="_blank" class="forum-link">339936.xyz</a>
-      </div>
-
-      <div class="vps-footer" style="margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px; text-align: left; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-        <div style="font-weight: bold; color: var(--text-primary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-          <svg xmlns="http://www.w3.org/2000/svg" style="width:16px; height:16px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-          🎁 捐赠支持项目开发：
-        </div>
-        <div style="font-family: monospace; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 6px; margin-top: 6px; word-break: break-all; select-all: true;">
-          <span style="color: var(--primary); font-weight: bold;">BNB (BSC):</span> 0xB6d78c42CEB0687A31B8cfEBE4b51b6eB8953C17<br>
-          <span style="color: var(--primary); font-weight: bold;">TRX (TRC20):</span> TSdzCW6JvsrqcppodYjhSrku4mYmDJ9pxf
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="vps-recommend-tab" onclick="openVpsModal()">VPS购买推荐</div>
-
   <!-- Gateway Modal (网关自检与代理测试) -->
   <div id="gateway_modal" class="modal">
     <div class="modal-content" style="max-width: 600px; width: 90%;">
@@ -3471,7 +3512,7 @@ INDEX_HTML = r"""<!doctype html>
           <svg xmlns="http://www.w3.org/2000/svg" style="width:20px; height:20px; color: var(--primary);" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
           网关设置与自检
         </h3>
-        <button type="button" onclick="closeGatewayModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeGatewayModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
@@ -3485,12 +3526,12 @@ INDEX_HTML = r"""<!doctype html>
       </div>
 
       <!-- 分割线 -->
-      <div style="border-top: 1px dashed rgba(255, 255, 255, 0.08); margin: 20px 0;"></div>
+      <div style="border-top: 1px dashed rgba(0, 0, 0, 0.08); margin: 20px 0;"></div>
 
       <!-- 本地代理出口检测 -->
       <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 12px; padding: 16px;">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-          <div class="stat-icon-wrapper" style="background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.2); width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;">
+          <div class="stat-icon-wrapper" style="background: rgba(0, 102, 204, 0.08); border-color: rgba(0, 113, 227, 0.18); width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;">
             <svg xmlns="http://www.w3.org/2000/svg" class="stat-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="color: var(--primary); width: 18px; height: 18px;"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071a10.5 10.5 0 0114.14 0M1.414 8.05a16 16 0 0121.172 0" /></svg>
           </div>
           <div>
@@ -3534,7 +3575,7 @@ INDEX_HTML = r"""<!doctype html>
         
         <div style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
           <label class="form-label" for="log_filter_select" style="margin: 0; font-size: 13px; color: var(--text-secondary);">日志筛选:</label>
-          <select id="log_filter_select" class="input-field" style="width: 140px; height: 32px; font-size: 12px; border-radius: 6px; padding: 0 8px; background: rgba(255, 255, 255, 0.03);" onchange="filterAndRenderLogs()">
+          <select id="log_filter_select" class="input-field" style="width: 140px; height: 32px; font-size: 12px; border-radius: 6px; padding: 0 8px; background: #ffffff;" onchange="filterAndRenderLogs()">
             <option value="all">全部日志</option>
             <option value="proxy">代理相关 (Proxy)</option>
             <option value="vpn">VPN 连接 (VPN)</option>
@@ -3542,13 +3583,13 @@ INDEX_HTML = r"""<!doctype html>
           </select>
         </div>
         
-        <button type="button" onclick="closeLogsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+        <button type="button" onclick="closeLogsModal()" style="background: transparent; border: none; padding: 4px; cursor: pointer; color: var(--text-secondary); width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 50%;" onmouseover="this.style.background='#fafafc'" onmouseout="this.style.background='transparent'">
           <svg xmlns="http://www.w3.org/2000/svg" style="width:18px; height:18px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>
 
       <!-- Terminal Log Container -->
-      <div id="log_terminal_container" style="background: #050811; border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px; height: 400px; padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', Consolas, Courier, monospace; font-size: 12px; line-height: 1.5; text-align: left; white-space: pre-wrap; word-break: break-all; color: #a5b4fc; box-shadow: inset 0 4px 20px rgba(0,0,0,0.8); position: relative; margin-bottom: 20px;">
+      <div id="log_terminal_container" style="background: #050811; border: 1px solid #fafafc; border-radius: 10px; height: 400px; padding: 16px; overflow-y: auto; font-family: 'JetBrains Mono', Consolas, Courier, monospace; font-size: 12px; line-height: 1.5; text-align: left; white-space: pre-wrap; word-break: break-all; color: var(--primary); box-shadow: inset 0 4px 20px rgba(0,0,0,0.8); position: relative; margin-bottom: 20px;">
         <div style="color: var(--text-secondary); text-align: center; margin-top: 150px;">
           暂无今日运行日志记录。
         </div>
@@ -3556,11 +3597,11 @@ INDEX_HTML = r"""<!doctype html>
 
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div style="display: flex; gap: 8px;">
-          <button type="button" onclick="copyLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: rgba(255,255,255,0.05); color: var(--text-primary); border: 1px solid var(--border-color);">
+          <button type="button" onclick="copyLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: #fafafc; color: var(--text-primary); border: 1px solid var(--border-color);">
             <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px; margin-right: 4px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
             一键复制
           </button>
-          <button type="button" onclick="exportLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: rgba(255,255,255,0.05); color: var(--text-primary); border: 1px solid var(--border-color);">
+          <button type="button" onclick="exportLogContent()" class="btn-primary" style="height: 38px; padding: 0 16px; background: #fafafc; color: var(--text-primary); border: 1px solid var(--border-color);">
             <svg xmlns="http://www.w3.org/2000/svg" style="width:14px; height:14px; margin-right: 4px;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
             导出日志
           </button>
@@ -3575,6 +3616,8 @@ let nodes=[], state={}, testingNodeIds = new Set();
 let currentPage = 1;
 const pageSize = 99999;
 let currentPageNodes = [];
+const MANUAL_TEST_NODE_LIMIT = 5;
+let isTestingAllNodes = false;
 
 const $=id=>document.getElementById(id);
 const esc=s=>String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
@@ -3675,6 +3718,16 @@ function getLatencyClass(ms) {
   return 'latency-poor';
 }
 
+function formatNodeLatency(n) {
+  if (!n || n.probe_status === "unavailable") return "-";
+  const latency = Number(n.latency_ms || 0);
+  if (latency > 0 && (n.probe_status === "available" || n.active)) {
+    const latencyClass = getLatencyClass(latency);
+    return `<span class="latency-val ${latencyClass}">${latency} ms</span>`;
+  }
+  return "-";
+}
+
 function updateCountryFilter() {
   const select = $("country_filter");
   const selectedValue = select.value;
@@ -3729,14 +3782,38 @@ function getFilteredNodes() {
   });
 }
 
+function nodeDisplayRank(n) {
+  if (!n) return 3;
+  if (n.active || n.probe_status === "available") return 0;
+  if (n.probe_status === "not_checked" || n.probe_status === "testing") return 1;
+  if (n.probe_status === "unavailable") return 2;
+  return 1;
+}
+
+function nodeLatencyValue(n) {
+  const latency = Number(n && n.latency_ms ? n.latency_ms : 0);
+  return latency > 0 ? latency : 999999;
+}
+
+function nodeIpTypeRank(n) {
+  return n && ["residential", "mobile"].includes(n.ip_type) ? 0 : 1;
+}
+
 function stableSortNodes() {
   nodes.sort((a, b) => {
     if (!a || !b) return 0;
-    const aScore = a.score || 0;
-    const bScore = b.score || 0;
-    if (bScore !== aScore) {
-      return bScore - aScore;
+    const rankDelta = nodeDisplayRank(a) - nodeDisplayRank(b);
+    if (rankDelta !== 0) return rankDelta;
+
+    if (nodeDisplayRank(a) === 0) {
+      const latencyDelta = nodeLatencyValue(a) - nodeLatencyValue(b);
+      if (latencyDelta !== 0) return latencyDelta;
+      const ipTypeDelta = nodeIpTypeRank(a) - nodeIpTypeRank(b);
+      if (ipTypeDelta !== 0) return ipTypeDelta;
     }
+
+    const scoreDelta = Number(b.score || 0) - Number(a.score || 0);
+    if (scoreDelta !== 0) return scoreDelta;
     const aId = a.id || "";
     const bId = b.id || "";
     return aId.localeCompare(bId);
@@ -3896,7 +3973,7 @@ function render(){
 
   // Render table rows
   if (currentPageNodes.length === 0) {
-    $("rows").innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">未找到符合过滤条件的备选节点。</td></tr>`;
+    $("rows").innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">未找到符合过滤条件的备选节点。</td></tr>`;
   } else {
     $("rows").innerHTML=currentPageNodes.map(n=>{
       if (!n) return '';
@@ -3905,8 +3982,7 @@ function render(){
       
       const badgeClass = isCurrentlyActive ? 'available' : (n.probe_status || 'not_checked');
       const badgeText = isCurrentlyActive ? '<span class="badge-pulse"></span>已连接' : translateStatus(n.probe_status);
-      const latencyClass = getLatencyClass(n.latency_ms);
-      const latencyText = n.latency_ms ? `<span class="latency-val ${latencyClass}">${n.latency_ms} ms</span>` : "-";
+      const latencyText = formatNodeLatency(n);
       const displayLocation = n.location || translateCountry(n.country) || "-";
       
       const isTesting = testingNodeIds.has(n.id) || n.probe_status === "testing";
@@ -3918,7 +3994,7 @@ function render(){
       // Connect button is disabled if probe status is "unavailable" and not already active, or if we are already connecting
       const isUnavailable = n.probe_status === "unavailable";
       const connectBtn = isCurrentlyActive 
-        ? `<button class="connect-btn" disabled style="background: var(--success-gradient); color: white; cursor: default; opacity: 1;">已连接</button>`
+        ? `<button class="connect-btn" disabled style="background: var(--primary); color: white; cursor: default; opacity: 1;">已连接</button>`
         : `<button class="connect-btn" ${(isUnavailable || isTesting || state.is_connecting) ? 'disabled style="opacity:0.3; cursor:not-allowed;"' : ''} onclick="connectNode('${esc(n.id)}')">切换</button>`;
       
       const favoriteIds = Array.isArray(state.favorite_node_ids) ? state.favorite_node_ids : [];
@@ -3931,6 +4007,7 @@ function render(){
         <td><span class="badge ${badgeClass}">${badgeText}</span></td>
         <td class="mono" style="white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.ip||n.remote_host)}:${n.remote_port||""}">${esc(n.ip||n.remote_host)}:${n.remote_port||""}</td>
         <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${esc(displayLocation)}">${esc(displayLocation)}</td>
+        <td><span class="latency-cell">${latencyText}</span></td>
         <td style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${esc(n.owner||n.as_name||"-")}">${esc(n.owner||n.as_name||"-")}</td>
         <td style="white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis;" title="${esc(translateIpType(n.ip_type))}">${esc(translateIpType(n.ip_type))}</td>
         <td>
@@ -3992,6 +4069,66 @@ async function testNode(btn, id, event){
   } catch (e) {
   } finally {
     testingNodeIds.delete(id);
+    render();
+  }
+}
+
+async function testAllFilteredNodes(){
+  if (isTestingAllNodes || state.is_connecting) return;
+  const btn = $("btn_test_all_nodes");
+  const ids = getFilteredNodes()
+    .filter(n => n && n.id && n.probe_status !== "testing")
+    .map(n => n.id);
+  if (!ids.length) {
+    alert("当前筛选结果中没有可测试节点");
+    return;
+  }
+
+  isTestingAllNodes = true;
+  const originalText = btn ? btn.textContent : "测试全部节点";
+  let done = 0;
+  const batchSize = MANUAL_TEST_NODE_LIMIT;
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = `检测中 ${done}/${ids.length}`;
+    }
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batchIds = ids.slice(i, i + batchSize);
+      batchIds.forEach(id => testingNodeIds.add(id));
+      render();
+      const response = await fetch("./api/test_nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: batchIds })
+      });
+      const result = await response.json();
+      if (!result.ok) {
+        throw new Error(result.error || "批量检测失败");
+      }
+      const updatedNodes = Array.isArray(result.nodes) ? result.nodes : [];
+      updatedNodes.forEach(updated => {
+        const idx = nodes.findIndex(n => n && n.id === updated.id);
+        if (idx !== -1) nodes[idx] = updated;
+      });
+      batchIds.forEach(id => testingNodeIds.delete(id));
+      done += batchIds.length;
+      stableSortNodes();
+      updateCountryFilter();
+      if (btn) btn.textContent = `检测中 ${done}/${ids.length}`;
+      render();
+    }
+  } catch (e) {
+    alert(e.message || "批量检测失败");
+  } finally {
+    ids.forEach(id => testingNodeIds.delete(id));
+    isTestingAllNodes = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+    stableSortNodes();
     render();
   }
 }
@@ -4271,13 +4408,13 @@ function updateFavPanelUI() {
     if (favRoutingBtn) {
       if (state.routing_mode === "favorites") {
         favRoutingBtn.textContent = "禁用仅用收藏出站";
-        favRoutingBtn.style.background = "var(--danger-gradient)";
+        favRoutingBtn.style.background = "var(--danger)";
         favRoutingBtn.style.borderColor = "transparent";
         favRoutingBtn.style.color = "#ffffff";
-        favRoutingBtn.style.boxShadow = "0 0 12px rgba(244, 63, 94, 0.3)";
+        favRoutingBtn.style.boxShadow = "none";
       } else {
         favRoutingBtn.textContent = "启用仅用收藏出站";
-        favRoutingBtn.style.background = "rgba(255,255,255,0.03)";
+        favRoutingBtn.style.background = "var(--surface-pearl)";
         favRoutingBtn.style.borderColor = "var(--border-color)";
         favRoutingBtn.style.color = "var(--text-primary)";
         favRoutingBtn.style.boxShadow = "none";
@@ -4317,7 +4454,21 @@ async function toggleFavRouting() {
 }
 
 function selectOptionCard(groupName, value) {
-  if (groupName === 'routing_mode') {
+  if (groupName === 'egress_mode') {
+    const input = $("net_egress_mode");
+    if (input) input.value = value;
+
+    const cards = document.querySelectorAll("#egress_mode_group .egress-option-card");
+    cards.forEach(card => {
+      if (card.getAttribute("data-value") === value) {
+        card.classList.add("active");
+      } else {
+        card.classList.remove("active");
+      }
+    });
+
+    handleEgressModeChange(value);
+  } else if (groupName === 'routing_mode') {
     const input = $("net_routing_mode");
     if (input) input.value = value;
     
@@ -4354,7 +4505,32 @@ function setRoutingIpType(value) {
   selectOptionCard('routing_ip_type', value);
 }
 
+function setEgressMode(value) {
+  selectOptionCard('egress_mode', value);
+}
+
+function handleEgressModeChange(mode) {
+  const warpGroup = $("net_warp_proxy_group");
+  const warningDiv = $("net_routing_warning");
+  if (warpGroup) {
+    warpGroup.style.display = mode === "warp" ? "block" : "none";
+  }
+  if (mode === "warp" && warningDiv) {
+    warningDiv.style.color = "var(--warning)";
+    warningDiv.style.background = "rgba(245, 158, 11, 0.1)";
+    warningDiv.style.border = "1px solid rgba(245, 158, 11, 0.2)";
+    warningDiv.innerHTML = `⚠️ <strong>WARP 出站</strong>：当前本地代理将通过配置的 WARP 本地代理端口出站，VPNGate 节点自动切换会暂停。`;
+  } else if (mode === "vpngate") {
+    handleRoutingModeChange($("net_routing_mode").value || "auto");
+  }
+}
+
 function handleRoutingModeChange(mode) {
+  const egressInput = $("net_egress_mode");
+  if (egressInput && egressInput.value === "warp") {
+    handleEgressModeChange("warp");
+    return;
+  }
   const countryGroup = $("net_force_country_group");
   const warningDiv = $("net_routing_warning");
   
@@ -4380,7 +4556,7 @@ function handleRoutingModeChange(mode) {
     countryGroup.style.display = "none";
     warningDiv.style.color = "var(--text-secondary)";
     warningDiv.style.background = "rgba(255, 255, 255, 0.02)";
-    warningDiv.style.border = "1px solid rgba(255, 255, 255, 0.05)";
+    warningDiv.style.border = "1px solid #fafafc";
     warningDiv.innerHTML = `ℹ️ <strong>自动配置</strong>：全自动测试并选择最佳IP。在使用过程中，如果当前连接节点没有失效，将不再更换IP；如果当前节点失效，系统将立刻秒级自动漂移到其他最快的可用节点。`;
   }
 }
@@ -4526,6 +4702,9 @@ function openNetworkModal() {
   
   if (state) {
     $("net_proxy_port").value = state.proxy_port || 7928;
+    const egressMode = state.egress_mode || "vpngate";
+    $("net_warp_proxy_url").value = state.warp_proxy_url || "socks5://127.0.0.1:40000";
+    selectOptionCard('egress_mode', egressMode);
     const mode = state.routing_mode || "auto";
     const ipType = state.routing_ip_type || "all";
     
@@ -4555,6 +4734,8 @@ async function saveNetwork(e) {
   const routingMode = $("net_routing_mode").value;
   const forceCountry = $("net_force_country").value;
   const routingIpType = $("net_routing_ip_type").value;
+  const egressMode = $("net_egress_mode").value;
+  const warpProxyUrl = $("net_warp_proxy_url").value.trim() || "socks5://127.0.0.1:40000";
   
   if (isNaN(proxyPort) || proxyPort < 1024 || proxyPort > 65535) {
     errorDivEl.textContent = "代理出站端口范围必须在 1024 至 65535 之间";
@@ -4590,7 +4771,9 @@ async function saveNetwork(e) {
         proxy_port: proxyPort,
         routing_mode: routingMode,
         force_country: forceCountry,
-        routing_ip_type: routingIpType
+        routing_ip_type: routingIpType,
+        egress_mode: egressMode,
+        warp_proxy_url: warpProxyUrl
       })
     });
     
@@ -4629,14 +4812,6 @@ async function saveNetwork(e) {
 }
 
 
-
-function openVpsModal() {
-  $("vps_recommend_modal").style.display = "flex";
-}
-
-function closeVpsModal() {
-  $("vps_recommend_modal").style.display = "none";
-}
 
 async function logoutAdmin() {
   try {
@@ -4701,7 +4876,12 @@ function renderGatewayServices(services) {
   const container = $("gateway_services_list");
   if (!container) return;
   
-  let html = "";
+  const egressLabel = state ? (state.egress_label || (state.egress_mode === "warp" ? "WARP" : "VPNGate")) : "VPNGate";
+  let html = `
+    <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 16px; font-size: 12px; color: var(--text-secondary);">
+      出站核心: ${esc(egressLabel)}
+    </div>
+  `;
   services.forEach(s => {
     const statusText = s.status === "running" ? "正在运行" : "已停止";
     const badgeClass = s.status === "running" ? "available" : "unavailable";
@@ -4777,7 +4957,7 @@ function filterAndRenderLogs() {
   }
   
   const linesHtml = filtered.map(l => {
-    let color = "#a5b4fc";
+    let color = "var(--primary)";
     if (l.module === "Proxy") color = "#38bdf8";
     if (l.module === "VPN") color = "#34d399";
     if (l.level === "WARNING") color = "#fbbf24";
@@ -4880,8 +5060,10 @@ def check_proxy_health() -> dict[str, Any]:
                 pass
 
     # 2. 检测虚拟网卡 tun0 是否存在 (Linux 下)
+    ui_cfg = load_ui_config()
+    egress_mode = ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE)
     tun_path = Path("/sys/class/net/tun0")
-    if sys.platform.startswith("linux") and not tun_path.exists():
+    if egress_mode == "vpngate" and sys.platform.startswith("linux") and not tun_path.exists():
         return {
             "ok": False,
             "error": "[错误代码 3004] [ERR_ROUTE_DEV_NOT_FOUND] VPN 虚拟网卡 (tun0) 未启用，请确保当前已成功连接 VPN 节点"
@@ -4993,6 +5175,18 @@ def background_proxy_checker() -> None:
                 log_to_json("INFO", "Proxy", f"代理可用，IP: {res['ip']}, 延迟: {res['latency_ms']} ms")
             else:
                 error_msg = res.get("error", "未知错误")
+                if active_openvpn_node_id and should_defer_proxy_failure(error_msg, active_node_connected_at):
+                    waiting_msg = "VPN 网卡正在就绪，代理检测将在下一轮重试"
+                    set_state(
+                        proxy_ok=False,
+                        proxy_ip="-",
+                        proxy_latency_ms=0,
+                        proxy_error=waiting_msg
+                    )
+                    log_to_json("INFO", "Proxy", f"{waiting_msg}: {error_msg}")
+                    time.sleep(5)
+                    continue
+
                 if active_openvpn_node_id:
                     print(f"[警告] {LOCAL_PROXY_PORT} 端口本地代理当前不可用！原因: {error_msg}", flush=True)
                     log_to_json("WARNING", "Proxy", f"代理不可用: {error_msg}")
@@ -5179,6 +5373,7 @@ class Handler(BaseHTTPRequestHandler):
                         ).start()
                     if last_active_latency > 0:
                         active_node["latency_ms"] = last_active_latency
+            nodes = sort_all_nodes(nodes)
             stripped_nodes = []
             for n in nodes:
                 stripped = n.copy()
@@ -5449,6 +5644,13 @@ class Handler(BaseHTTPRequestHandler):
                 routing_mode = str(payload.get("routing_mode") or "auto").strip()
                 force_country = str(payload.get("force_country") or "").strip()
                 routing_ip_type = str(payload.get("routing_ip_type") or "all").strip()
+                egress_mode_raw = str(payload.get("egress_mode") or DEFAULT_EGRESS_MODE).strip()
+                warp_proxy_url_raw = str(payload.get("warp_proxy_url") or DEFAULT_WARP_PROXY_URL).strip()
+                try:
+                    egress_mode, warp_proxy_url = validate_egress_settings(egress_mode_raw, warp_proxy_url_raw)
+                except ValueError as exc:
+                    self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
                 
                 try:
                     new_proxy_port_int = int(new_proxy_port)
@@ -5469,6 +5671,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 
                 ui_cfg = load_ui_config()
+                previous_ui_cfg = dict(ui_cfg)
                 expected_proxy_port = ui_cfg.get("proxy_port", 7928)
                 fixed_node_id = current_fixed_node_id(ui_cfg) if routing_mode == "fixed_ip" else ""
                 
@@ -5483,6 +5686,8 @@ class Handler(BaseHTTPRequestHandler):
                 ui_cfg["routing_mode"] = routing_mode
                 ui_cfg["force_country"] = force_country
                 ui_cfg["routing_ip_type"] = routing_ip_type
+                ui_cfg["egress_mode"] = egress_mode
+                ui_cfg["warp_proxy_url"] = warp_proxy_url
                 if routing_mode == "favorites":
                     ui_cfg["fav_fail_fallback"] = False
                 if routing_mode == "fixed_ip":
@@ -5493,7 +5698,10 @@ class Handler(BaseHTTPRequestHandler):
                     DATA_DIR.mkdir(exist_ok=True, parents=True)
                     write_json(auth_file, ui_cfg)
 
-                policy_message = enforce_active_node_allowed_by_routing(ui_cfg, "路由设置已更新")
+                egress_message = apply_egress_mode_transition(previous_ui_cfg, ui_cfg)
+                policy_message = None
+                if egress_mode == "vpngate":
+                    policy_message = enforce_active_node_allowed_by_routing(ui_cfg, "路由设置已更新")
                 
                 restart_needed = (new_proxy_port_int != expected_proxy_port)
                 if restart_needed:
@@ -5506,7 +5714,7 @@ class Handler(BaseHTTPRequestHandler):
                     
                     threading.Thread(target=restart_server, daemon=True).start()
                 else:
-                    message = policy_message or "配置更新成功，已即时生效！"
+                    message = egress_message or policy_message or "配置更新成功，已即时生效！"
                     self.send_json({"ok": True, "restart_needed": False, "message": message})
             except Exception as exc:
                 self.send_json({"ok": False, "error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -5744,6 +5952,9 @@ def main() -> None:
     sys.stdout = tee
     sys.stderr = tee
 
+    proxy_server.set_egress_upstream_provider(get_egress_upstream_config)
+    startup_ui_cfg = load_ui_config()
+
     write_json(
         STATE_FILE,
         {
@@ -5758,6 +5969,8 @@ def main() -> None:
             "is_connecting": True,
             "active_node_latency": "正在准备",
             "blacklisted_nodes": 0,
+            "egress_mode": startup_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE),
+            "egress_label": "WARP" if startup_ui_cfg.get("egress_mode", DEFAULT_EGRESS_MODE) == "warp" else "VPNGate",
         },
     )
     threading.Thread(target=proxy_server.start_proxy_server, args=(LOCAL_PROXY_HOST, LOCAL_PROXY_PORT), daemon=True).start()
